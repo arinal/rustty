@@ -4,6 +4,8 @@ A modern terminal emulator written in Rust, featuring CPU-based rendering and ef
 
 **What will make Rustty different?** Planned smooth pixel-level scrolling, similar to NeoVide. Unlike traditional terminal emulators that scroll by whole character lines, Rustty will enable buttery-smooth scrolling animations.
 
+![Rustty Terminal Screenshot](rustty-shot.png)
+
 ## Features
 
 - ❌ **Smooth Pixel-Level Scrolling** (Planned) - Unlike traditional terminals (1-line scroll resolution), Rustty will scroll smoothly at the pixel level, inspired by NeoVide
@@ -271,18 +273,16 @@ Test the 256-color palette support:
 
 ## Dependencies
 
-### Core
+### Library Dependencies (Terminal Emulation)
+- **`nix`** - Unix PTY and process management
+- **`vte`** - ANSI escape sequence parser
+- **`anyhow`** - Error handling
+
+### Binary Dependencies (UI Implementation)
 - **`winit`** - Cross-platform window creation
 - **`raqote`** - 2D graphics rendering
 - **`softbuffer`** - Software rendering backend
 - **`font-kit`** - Font loading and metrics
-
-### Terminal
-- **`nix`** - Unix PTY and process management
-- **`vte`** - ANSI escape sequence parser
-
-### Utilities
-- **`anyhow`** - Error handling
 
 ## License
 
