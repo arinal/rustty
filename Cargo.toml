@@ -1,0 +1,13 @@
+[package]
+name = "rustty"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1.0"
+winit = "0.30"
+softbuffer = "0.4"
+raqote = "0.8"
+font-kit = "0.14"
+nix = { version = "0.29", features = ["fs", "process", "term"] }
+vte = "0.13"
