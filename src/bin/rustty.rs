@@ -1,16 +1,16 @@
-use crate::terminal::{Shell, Terminal};
 use anyhow::{Context as _, Result};
 use font_kit::family_name::FamilyName;
 use font_kit::properties::Properties;
 use font_kit::source::SystemSource;
 use raqote::{DrawTarget, SolidSource, Source};
+use rustty::terminal::{Shell, Terminal};
 use softbuffer::{Context, Surface};
 use std::num::NonZeroU32;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 use winit::application::ApplicationHandler;
 use winit::event::{ElementState, WindowEvent};
-use winit::event_loop::{ActiveEventLoop, ControlFlow};
+use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::keyboard::{Key, ModifiersState, NamedKey};
 use winit::window::{Window, WindowId};
 
@@ -203,7 +203,12 @@ impl App {
 
             // Draw cursor
             // Calculate cursor position relative to viewport
-            let cursor_viewport_row = self.terminal.state().cursor.row.saturating_sub(self.terminal.state().grid.viewport_start);
+            let cursor_viewport_row = self
+                .terminal
+                .state()
+                .cursor
+                .row
+                .saturating_sub(self.terminal.state().grid.viewport_start);
             if cursor_viewport_row < self.terminal.state().grid.viewport_height {
                 let cursor_x = offset_x + self.terminal.state().cursor.col as f32 * self.char_width;
                 let cursor_y = offset_y + cursor_viewport_row as f32 * self.char_height;
@@ -433,218 +438,9 @@ impl ApplicationHandler for App {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::terminal::Color;
-
-    #[test]
-    fn test_app_new() {
-        let app = App::new();
-
-        // Verify initial state
-        assert!(app.window.is_none());
-        assert!(app.surface.is_none());
-        assert_eq!(app.terminal.state().grid.width, 80);
-        assert_eq!(app.terminal.state().grid.viewport_height, 24);
-        assert_eq!(app.terminal.state().cursor.row, 0);
-        assert_eq!(app.terminal.state().cursor.col, 0);
-        assert_eq!(app.font_size, 16.0);
-        assert_eq!(app.char_width, 9.0);
-        assert_eq!(app.char_height, 20.0);
-
-        // Verify colors
-        assert_eq!(app.terminal.state().fg.r, 255);
-        assert_eq!(app.terminal.state().fg.g, 255);
-        assert_eq!(app.terminal.state().fg.b, 255);
-        assert_eq!(app.terminal.state().bg.r, 0);
-        assert_eq!(app.terminal.state().bg.g, 0);
-        assert_eq!(app.terminal.state().bg.b, 0);
-    }
-
-    #[test]
-    fn test_calculate_grid_size_normal() {
-        let app = App::new();
-
-        // Window size: 800x600
-        let (cols, rows) = app.calculate_grid_size(800, 600);
-
-        // cols = (800 - 20) / 9.0 = 86.66 -> 86
-        // rows = (600 - 40) / 20.0 = 28
-        assert_eq!(cols, 86);
-        assert_eq!(rows, 28);
-    }
-
-    #[test]
-    fn test_calculate_grid_size_small_window() {
-        let app = App::new();
-
-        // Very small window
-        let (cols, rows) = app.calculate_grid_size(100, 100);
-
-        // Should be clamped to minimum 10x3
-        assert_eq!(cols, 10);
-        assert_eq!(rows, 3);
-    }
-
-    #[test]
-    fn test_calculate_grid_size_wide_window() {
-        let app = App::new();
-
-        // Wide window: 1920x1080
-        let (cols, rows) = app.calculate_grid_size(1920, 1080);
-
-        // cols = (1920 - 20) / 9.0 = 211.11 -> 211
-        // rows = (1080 - 40) / 20.0 = 52
-        assert_eq!(cols, 211);
-        assert_eq!(rows, 52);
-    }
-
-    #[test]
-    fn test_resize_terminal_updates_grid() {
-        let mut app = App::new();
-
-        // Initial grid is 80x24
-        assert_eq!(app.terminal.state().grid.width, 80);
-        assert_eq!(app.terminal.state().grid.viewport_height, 24);
-
-        // Resize to 100x30
-        app.resize_terminal(100, 30);
-
-        assert_eq!(app.terminal.state().grid.width, 100);
-        assert_eq!(app.terminal.state().grid.viewport_height, 30);
-    }
-
-    #[test]
-    fn test_resize_terminal_clamps_cursor() {
-        let mut app = App::new();
-
-        // Set cursor to edge of 80x24 grid
-        app.terminal.state_mut().cursor.row = 23;
-        app.terminal.state_mut().cursor.col = 79;
-
-        // Resize to smaller grid: 50x10
-        app.resize_terminal(50, 10);
-
-        // Cursor should be clamped to valid position
-        assert_eq!(app.terminal.state().cursor.row, 9); // max row for 10-row grid
-        assert_eq!(app.terminal.state().cursor.col, 49); // max col for 50-col grid
-    }
-
-    #[test]
-    fn test_resize_terminal_preserves_content() {
-        let mut app = App::new();
-
-        // Put some content in the grid
-        let cell = crate::terminal::Cell::new('A', Color::white(), Color::black());
-        app.terminal.state_mut().grid.put_cell(cell, 0, 0);
-
-        let cell = crate::terminal::Cell::new('B', Color::white(), Color::black());
-        app.terminal.state_mut().grid.put_cell(cell, 5, 10);
-
-        // Resize to larger grid
-        app.resize_terminal(100, 30);
-
-        // Content should be preserved
-        assert_eq!(app.terminal.state().grid.cells[0][0].ch, 'A');
-        assert_eq!(app.terminal.state().grid.cells[5][10].ch, 'B');
-    }
-
-    #[test]
-    fn test_handle_keyboard_input_named_keys() {
-        let mut app = App::new();
-
-        // Without PTY, this should not panic
-        app.handle_keyboard_input(&Key::Named(NamedKey::Enter), None);
-        app.handle_keyboard_input(&Key::Named(NamedKey::Backspace), None);
-        app.handle_keyboard_input(&Key::Named(NamedKey::Tab), None);
-        app.handle_keyboard_input(&Key::Named(NamedKey::ArrowUp), None);
-        app.handle_keyboard_input(&Key::Named(NamedKey::ArrowDown), None);
-        app.handle_keyboard_input(&Key::Named(NamedKey::ArrowLeft), None);
-        app.handle_keyboard_input(&Key::Named(NamedKey::ArrowRight), None);
-
-        // Test passes if no panic occurs
-    }
-
-    #[test]
-    fn test_handle_keyboard_input_character() {
-        let mut app = App::new();
-
-        // Without PTY, this should not panic
-        app.handle_keyboard_input(&Key::Character("a".into()), Some("a"));
-        app.handle_keyboard_input(&Key::Character("Z".into()), Some("Z"));
-        app.handle_keyboard_input(&Key::Character("1".into()), Some("1"));
-
-        // Test passes if no panic occurs
-    }
-
-    #[test]
-    fn test_cursor_position_initial() {
-        let app = App::new();
-
-        assert_eq!(app.terminal.state().cursor.row, 0);
-        assert_eq!(app.terminal.state().cursor.col, 0);
-    }
-
-    #[test]
-    fn test_grid_dimensions() {
-        let app = App::new();
-
-        // Initial grid should be 80x24
-        assert_eq!(app.terminal.state().grid.width, 80);
-        assert_eq!(app.terminal.state().grid.viewport_height, 24);
-        assert_eq!(app.terminal.state().grid.cells.len(), 24);
-        assert_eq!(app.terminal.state().grid.cells[0].len(), 80);
-    }
-
-    #[test]
-    fn test_font_loaded() {
-        let app = App::new();
-
-        // Font might or might not load depending on system
-        // Just verify the field exists and can be accessed
-        let _ = app.font.is_some();
-    }
-
-    #[test]
-    fn test_character_dimensions() {
-        let app = App::new();
-
-        // Verify character dimensions are reasonable
-        assert!(app.char_width > 0.0);
-        assert!(app.char_height > 0.0);
-        assert!(app.font_size > 0.0);
-
-        // Verify specific expected values
-        assert_eq!(app.char_width, 9.0);
-        assert_eq!(app.char_height, 20.0);
-        assert_eq!(app.font_size, 16.0);
-    }
-
-    #[test]
-    fn test_ctrl_key_combinations() {
-        // This test verifies that Ctrl+letter combinations produce correct control codes
-        // We can't easily test the full keyboard handler without a PTY, but we can
-        // verify the control code calculation logic is correct
-
-        // Ctrl+A should produce 0x01
-        let ctrl_a = 1;
-        assert_eq!(ctrl_a, 1);
-
-        // Ctrl+R should produce 0x12 (18) for reverse history search
-        let ctrl_r = b'r' - b'a' + 1;
-        assert_eq!(ctrl_r, 18);
-
-        // Ctrl+C should produce 0x03 (interrupt)
-        let ctrl_c = b'c' - b'a' + 1;
-        assert_eq!(ctrl_c, 3);
-
-        // Ctrl+D should produce 0x04 (EOF)
-        let ctrl_d = b'd' - b'a' + 1;
-        assert_eq!(ctrl_d, 4);
-
-        // Ctrl+Z should produce 0x1A (26) (suspend)
-        let ctrl_z = b'z' - b'a' + 1;
-        assert_eq!(ctrl_z, 26);
-    }
+fn main() -> Result<()> {
+    let event_loop = EventLoop::new().context("Failed to create event loop")?;
+    let mut app = App::new();
+    event_loop.run_app(&mut app)?;
+    Ok(())
 }

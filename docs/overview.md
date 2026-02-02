@@ -64,16 +64,6 @@ Guide for debugging and tracing ANSI escape sequences in Rustty.
 
 For general usage and getting started, see the main [README.md](../README.md) in the project root.
 
-## Contributing to Documentation
-
-When adding new features to Rustty:
-
-1. Update `ansi-implementation.md` if you add ANSI sequence support
-2. Update `debugging.md` if you add debugging features
-3. Update `terminal-fundamentals.md` if you change core architecture concepts
-4. Update `../CLAUDE.md` (root) if you change the implementation or architecture
-5. Keep examples and code snippets up to date
-
 ## Additional Resources
 
 - [ANSI Escape Sequences (Wikipedia)](https://en.wikipedia.org/wiki/ANSI_escape_code)

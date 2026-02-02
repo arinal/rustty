@@ -57,16 +57,26 @@ A modern terminal emulator written in Rust, featuring CPU-based rendering and ef
 
 ### Module Breakdown
 
-- **`src/main.rs`** - Application entry point (~20 lines)
-- **`src/app.rs`** - Main application logic, window management, event handling (~450 lines)
-- **`src/terminal/`** - All terminal emulation functionality (~1500 lines total)
-  - **`mod.rs`** - Terminal struct with VTE Perform implementation
-  - **`shell.rs`** - Shell process management + PTY + reader thread
-  - **`grid.rs`** - Terminal grid data structure with scrollback buffer
-  - **`command.rs`** - ANSI command enums (CsiCommand, SgrParameter, etc.)
-  - **`color.rs`** - Color representation and ANSI color palette
-  - **`cursor.rs`** - Cursor positioning
-  - **`state.rs`** - Terminal state (pure data structure)
+Rustty is organized as a **library + binary**:
+
+**Library** (`src/lib.rs` + `src/terminal/`):
+- **Pure terminal emulation** with zero UI dependencies (~1500 lines)
+- Exports: `Terminal`, `Shell`, `TerminalGrid`, `Cell`, `Color`, etc.
+- Can be used to build custom terminal UIs
+
+**Binary** (`src/bin/rustty.rs`):
+- **UI implementation** using winit + raqote + softbuffer (~460 lines)
+- Imports terminal types from library
+- Handles window management, rendering, and event processing
+
+**Terminal modules**:
+- **`mod.rs`** - Terminal struct with VTE Perform implementation
+- **`shell.rs`** - Shell process management + PTY + reader thread
+- **`grid.rs`** - Terminal grid data structure with scrollback buffer
+- **`command.rs`** - ANSI command enums (CsiCommand, SgrParameter, etc.)
+- **`color.rs`** - Color representation and ANSI color palette
+- **`cursor.rs`** - Cursor positioning
+- **`state.rs`** - Terminal state (pure data structure)
 
 ## Building
 
@@ -96,6 +106,8 @@ cargo test
 
 ## Usage
 
+### Running the Terminal Emulator
+
 Simply run the terminal:
 
 ```bash
@@ -107,6 +119,38 @@ The terminal will:
 2. Create an 800x600 window
 3. Automatically resize the grid when you resize the window
 4. Support full keyboard input and terminal output
+
+### Using the Library
+
+The `rustty` library can be used to build custom terminal UIs:
+
+```rust
+use rustty::{Terminal, Shell};
+
+fn main() -> anyhow::Result<()> {
+    // Create terminal and shell
+    let mut terminal = Terminal::new(80, 24);
+    let shell = Shell::new(80, 24)?;
+
+    // Process shell output
+    loop {
+        match shell.receiver.try_recv() {
+            Ok(data) => {
+                terminal.process_bytes(&data);
+
+                // Get terminal state for rendering
+                let viewport = terminal.state().grid.get_viewport();
+                // ... custom rendering logic
+            }
+            Err(_) => break,
+        }
+    }
+
+    Ok(())
+}
+```
+
+The library has zero UI dependencies - only PTY and ANSI parsing.
 
 ### Keyboard Shortcuts
 

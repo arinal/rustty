@@ -662,7 +662,6 @@ If you found this guide helpful, check out these other docs:
 
 - **[ANSI Implementation](ansi-implementation.md)** - What are those `\x1b[31m` sequences?
 - **[Debugging Guide](debugging.md)** - How to see what sequences are being sent
-- **[CLAUDE.md](../CLAUDE.md)** - Detailed implementation notes
 
 ### Explore the Code
 
