@@ -10,6 +10,7 @@ pub struct Cell {
     pub bold: bool,
     pub italic: bool,
     pub underline: bool,
+    pub reverse: bool,
 }
 
 impl Cell {
@@ -22,6 +23,7 @@ impl Cell {
             bold: false,
             italic: false,
             underline: false,
+            reverse: false,
         }
     }
 
@@ -32,6 +34,7 @@ impl Cell {
         bold: bool,
         italic: bool,
         underline: bool,
+        reverse: bool,
     ) -> Self {
         Self {
             ch,
@@ -40,6 +43,7 @@ impl Cell {
             bold,
             italic,
             underline,
+            reverse,
         }
     }
 }
@@ -53,6 +57,7 @@ impl Default for Cell {
             bold: false,
             italic: false,
             underline: false,
+            reverse: false,
         }
     }
 }

@@ -9,8 +9,8 @@ use nix::libc;
 use nix::pty::{Winsize, openpty};
 use nix::unistd::{ForkResult, fork};
 use std::os::fd::{AsRawFd, OwnedFd};
-use std::sync::mpsc::{Receiver, channel};
 use std::sync::Arc;
+use std::sync::mpsc::{Receiver, channel};
 use std::thread;
 
 /// Shell process with PTY and background I/O

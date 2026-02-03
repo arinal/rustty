@@ -124,6 +124,42 @@ pub enum CsiCommand {
     /// Default: n=0
     WindowManipulation { n: u16 },
 
+    /// Vertical Position Absolute (VPA)
+    /// ESC[{row}d
+    /// Default: row=1
+    /// Moves cursor to absolute row position, column unchanged
+    VerticalPositionAbsolute { row: u16 },
+
+    /// Erase Character (ECH)
+    /// ESC[{n}X
+    /// Default: n=1
+    /// Erases n characters at cursor by replacing with spaces
+    EraseCharacter { n: u16 },
+
+    /// Scroll Down (SD)
+    /// ESC[{n}T
+    /// Default: n=1
+    /// Scrolls viewport content down by n lines
+    ScrollDown { n: u16 },
+
+    /// Scroll Up (SU)
+    /// ESC[{n}S
+    /// Default: n=1
+    /// Scrolls viewport content up by n lines
+    ScrollUp { n: u16 },
+
+    /// Delete Character (DCH)
+    /// ESC[{n}P
+    /// Default: n=1
+    /// Deletes n characters at cursor, shifting remaining chars left
+    DeleteCharacter { n: u16 },
+
+    /// Reset Mode (RM)
+    /// ESC[{mode}l
+    /// Default: mode=0
+    /// Resets terminal mode (no-op currently)
+    ResetMode { mode: u16 },
+
     /// Unknown or unimplemented CSI command
     Unknown(char),
 }
@@ -220,6 +256,24 @@ impl CsiCommand {
             }),
             't' => Ok(Self::WindowManipulation {
                 n: Self::param_or(params, 0, 0),
+            }),
+            'd' => Ok(Self::VerticalPositionAbsolute {
+                row: Self::param_or(params, 0, 1),
+            }),
+            'X' => Ok(Self::EraseCharacter {
+                n: Self::param_or(params, 0, 1),
+            }),
+            'T' => Ok(Self::ScrollDown {
+                n: Self::param_or(params, 0, 1),
+            }),
+            'S' => Ok(Self::ScrollUp {
+                n: Self::param_or(params, 0, 1),
+            }),
+            'P' => Ok(Self::DeleteCharacter {
+                n: Self::param_or(params, 0, 1),
+            }),
+            'l' => Ok(Self::ResetMode {
+                mode: Self::param_or(params, 0, 0),
             }),
             _ => Err(AnsiParseError::UnknownCommand(final_byte)),
         }

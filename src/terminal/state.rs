@@ -33,6 +33,27 @@ pub struct TerminalState {
 
     /// Underline attribute
     pub underline: bool,
+
+    /// Reverse video attribute (swap fg/bg colors)
+    pub reverse: bool,
+
+    /// Auto wrap mode - whether text wraps to next line at right margin
+    pub auto_wrap: bool,
+
+    /// Bracketed paste mode - wraps pasted text with markers
+    pub bracketed_paste: bool,
+
+    /// Application cursor keys mode - changes arrow key sequences
+    pub application_cursor_keys: bool,
+
+    /// Show cursor mode - controls cursor visibility
+    pub show_cursor: bool,
+
+    /// Cursor blink mode - controls cursor blinking
+    pub cursor_blink: bool,
+
+    /// Mouse SGR tracking mode - enables SGR mouse protocol
+    pub mouse_sgr: bool,
 }
 
 impl TerminalState {
@@ -46,6 +67,13 @@ impl TerminalState {
             bold: false,
             italic: false,
             underline: false,
+            reverse: false,
+            auto_wrap: true, // VT100 default
+            bracketed_paste: false,
+            application_cursor_keys: false,
+            show_cursor: true,   // Cursor visible by default
+            cursor_blink: false, // No blinking by default
+            mouse_sgr: false,
         }
     }
 }

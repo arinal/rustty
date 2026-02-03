@@ -9,15 +9,15 @@
 //! - VTE parser integration
 
 // Submodules
-pub mod command;
 pub mod color;
+pub mod command;
 pub mod cursor;
 pub mod grid;
 pub mod state;
 
 // Re-export commonly used types
-pub use command::{AnsiParseError, CsiCommand, DecPrivateMode, EraseMode, SgrParameter};
 pub use color::Color;
+pub use command::{AnsiParseError, CsiCommand, DecPrivateMode, EraseMode, SgrParameter};
 pub use cursor::Cursor;
 pub use grid::{Cell, TerminalGrid};
 pub use state::TerminalState;
@@ -154,6 +154,30 @@ impl Terminal {
                 self.state.cursor.row = 0;
                 self.state.cursor.col = 0;
             }
+            DecPrivateMode::AutoWrapMode => {
+                // Enable automatic line wrapping at right margin
+                self.state.auto_wrap = true;
+            }
+            DecPrivateMode::BracketedPaste => {
+                // Enable bracketed paste mode
+                self.state.bracketed_paste = true;
+            }
+            DecPrivateMode::ApplicationCursorKeys => {
+                // Enable application cursor keys mode
+                self.state.application_cursor_keys = true;
+            }
+            DecPrivateMode::ShowCursor => {
+                // Show cursor
+                self.state.show_cursor = true;
+            }
+            DecPrivateMode::CursorBlink => {
+                // Enable cursor blinking
+                self.state.cursor_blink = true;
+            }
+            DecPrivateMode::MouseSGR => {
+                // Enable SGR mouse tracking
+                self.state.mouse_sgr = true;
+            }
             DecPrivateMode::Unknown(mode) => {
                 eprintln!("[ANSI] Unknown DEC private mode (set): {}", mode);
             }
@@ -175,6 +199,30 @@ impl Terminal {
             DecPrivateMode::AlternateScreenBuffer => {
                 // Restore main screen buffer
                 self.state.grid.use_main_screen();
+            }
+            DecPrivateMode::AutoWrapMode => {
+                // Disable automatic line wrapping
+                self.state.auto_wrap = false;
+            }
+            DecPrivateMode::BracketedPaste => {
+                // Disable bracketed paste mode
+                self.state.bracketed_paste = false;
+            }
+            DecPrivateMode::ApplicationCursorKeys => {
+                // Disable application cursor keys mode
+                self.state.application_cursor_keys = false;
+            }
+            DecPrivateMode::ShowCursor => {
+                // Hide cursor
+                self.state.show_cursor = false;
+            }
+            DecPrivateMode::CursorBlink => {
+                // Disable cursor blinking
+                self.state.cursor_blink = false;
+            }
+            DecPrivateMode::MouseSGR => {
+                // Disable SGR mouse tracking
+                self.state.mouse_sgr = false;
             }
             DecPrivateMode::Unknown(mode) => {
                 eprintln!("[ANSI] Unknown DEC private mode (reset): {}", mode);
@@ -212,6 +260,7 @@ impl Terminal {
                     self.state.bold = false;
                     self.state.italic = false;
                     self.state.underline = false;
+                    self.state.reverse = false;
                 }
                 SgrParameter::Bold => {
                     self.state.bold = true;
@@ -250,10 +299,26 @@ impl Terminal {
                     self.state.bg = Color::black();
                 }
                 SgrParameter::ExtendedForeground => {
-                    Self::handle_extended_color(&mut iter, true, &mut self.state.fg, &mut self.state.bg);
+                    Self::handle_extended_color(
+                        &mut iter,
+                        true,
+                        &mut self.state.fg,
+                        &mut self.state.bg,
+                    );
                 }
                 SgrParameter::ExtendedBackground => {
-                    Self::handle_extended_color(&mut iter, false, &mut self.state.fg, &mut self.state.bg);
+                    Self::handle_extended_color(
+                        &mut iter,
+                        false,
+                        &mut self.state.fg,
+                        &mut self.state.bg,
+                    );
+                }
+                SgrParameter::ReverseVideo => {
+                    self.state.reverse = true;
+                }
+                SgrParameter::NotReversed => {
+                    self.state.reverse = false;
                 }
                 SgrParameter::Unknown(code) => {
                     eprintln!("[ANSI] Unknown SGR parameter: {}", code);
@@ -268,30 +333,46 @@ impl Terminal {
 
 impl Perform for Terminal {
     fn print(&mut self, c: char) {
+        // Swap colors if reverse video is enabled
+        let (fg, bg) = if self.state.reverse {
+            (self.state.bg, self.state.fg)
+        } else {
+            (self.state.fg, self.state.bg)
+        };
+
         // Create cell with current attributes
         let cell = Cell {
             ch: c,
-            fg: self.state.fg,
-            bg: self.state.bg,
+            fg,
+            bg,
             bold: self.state.bold,
             italic: self.state.italic,
             underline: self.state.underline,
+            reverse: self.state.reverse,
         };
 
         // Check if we need to wrap to next line
         if self.state.cursor.col >= self.state.grid.width {
-            self.state.cursor.col = 0;
-            self.state.cursor.row += 1;
+            if self.state.auto_wrap {
+                // Wrap to next line
+                self.state.cursor.col = 0;
+                self.state.cursor.row += 1;
 
-            // If at bottom, scroll the viewport down
-            if self.state.cursor.row >= self.state.grid.viewport_height {
-                self.state.cursor.row = self.state.grid.viewport_height - 1;
-                // TODO: Actual scrolling logic
+                // If at bottom, scroll the viewport down
+                if self.state.cursor.row >= self.state.grid.viewport_height {
+                    self.state.cursor.row = self.state.grid.viewport_height - 1;
+                    // TODO: Actual scrolling logic
+                }
+            } else {
+                // No wrap: stay at right edge (overwrite last position)
+                self.state.cursor.col = self.state.grid.width - 1;
             }
         }
 
         // Put the cell at cursor position
-        self.state.grid.put_cell(cell, self.state.cursor.row, self.state.cursor.col);
+        self.state
+            .grid
+            .put_cell(cell, self.state.cursor.row, self.state.cursor.col);
 
         // Move cursor forward
         self.state.cursor.col += 1;
@@ -365,7 +446,8 @@ impl Perform for Terminal {
             CsiCommand::CursorPosition { row, col } => {
                 self.state.cursor.row =
                     (row.saturating_sub(1) as usize).min(self.state.grid.viewport_height - 1);
-                self.state.cursor.col = (col.saturating_sub(1) as usize).min(self.state.grid.width - 1);
+                self.state.cursor.col =
+                    (col.saturating_sub(1) as usize).min(self.state.grid.width - 1);
             }
 
             // Cursor movement
@@ -374,11 +456,13 @@ impl Perform for Terminal {
             }
 
             CsiCommand::CursorDown { n } => {
-                self.state.cursor.row = (self.state.cursor.row + n as usize).min(self.state.grid.viewport_height - 1);
+                self.state.cursor.row =
+                    (self.state.cursor.row + n as usize).min(self.state.grid.viewport_height - 1);
             }
 
             CsiCommand::CursorForward { n } => {
-                self.state.cursor.col = (self.state.cursor.col + n as usize).min(self.state.grid.width - 1);
+                self.state.cursor.col =
+                    (self.state.cursor.col + n as usize).min(self.state.grid.width - 1);
             }
 
             CsiCommand::CursorBack { n } => {
@@ -386,7 +470,8 @@ impl Perform for Terminal {
             }
 
             CsiCommand::CursorHorizontalAbsolute { col } => {
-                self.state.cursor.col = (col.saturating_sub(1) as usize).min(self.state.grid.width - 1);
+                self.state.cursor.col =
+                    (col.saturating_sub(1) as usize).min(self.state.grid.width - 1);
             }
 
             // Erase operations
@@ -406,7 +491,9 @@ impl Perform for Terminal {
                     }
                     // Clear current line up to cursor
                     for col in 0..=self.state.cursor.col {
-                        self.state.grid.put_cell(Cell::default(), self.state.cursor.row, col);
+                        self.state
+                            .grid
+                            .put_cell(Cell::default(), self.state.cursor.row, col);
                     }
                 }
                 EraseMode::AllWithScrollback => {
@@ -420,7 +507,9 @@ impl Perform for Terminal {
             CsiCommand::EraseInLine { mode } => match mode {
                 EraseMode::ToEnd => {
                     for col in self.state.cursor.col..self.state.grid.width {
-                        self.state.grid.put_cell(Cell::default(), self.state.cursor.row, col);
+                        self.state
+                            .grid
+                            .put_cell(Cell::default(), self.state.cursor.row, col);
                     }
                 }
                 EraseMode::All => {
@@ -428,7 +517,9 @@ impl Perform for Terminal {
                 }
                 EraseMode::ToBeginning => {
                     for col in 0..=self.state.cursor.col {
-                        self.state.grid.put_cell(Cell::default(), self.state.cursor.row, col);
+                        self.state
+                            .grid
+                            .put_cell(Cell::default(), self.state.cursor.row, col);
                     }
                 }
                 EraseMode::AllWithScrollback => {
@@ -479,6 +570,100 @@ impl Perform for Terminal {
             CsiCommand::SetCursorStyle { .. } => {
                 // Set cursor style (block, underline, bar)
                 // Requires cursor style in state
+            }
+
+            CsiCommand::VerticalPositionAbsolute { row } => {
+                // Move cursor to absolute row, column unchanged
+                self.state.cursor.row =
+                    (row.saturating_sub(1) as usize).min(self.state.grid.viewport_height - 1);
+            }
+
+            CsiCommand::EraseCharacter { n } => {
+                // Erase n characters at cursor position
+                let start_col = self.state.cursor.col;
+                let end_col = (start_col + n as usize).min(self.state.grid.width);
+                for col in start_col..end_col {
+                    self.state
+                        .grid
+                        .put_cell(Cell::default(), self.state.cursor.row, col);
+                }
+            }
+
+            CsiCommand::ScrollDown { n } => {
+                // Scroll viewport down by n lines (insert blank lines at top)
+                let viewport_start = self.state.grid.viewport_start;
+                for _ in 0..n {
+                    let blank_row = vec![Cell::default(); self.state.grid.width];
+                    self.state.grid.cells.insert(viewport_start, blank_row);
+                }
+
+                // Enforce scrollback limit
+                if self.state.grid.cells.len() > self.state.grid.max_scrollback {
+                    let excess = self.state.grid.cells.len() - self.state.grid.max_scrollback;
+                    self.state.grid.cells.drain(0..excess);
+                    self.state.grid.viewport_start =
+                        self.state.grid.viewport_start.saturating_sub(excess);
+                }
+            }
+
+            CsiCommand::ScrollUp { n } => {
+                // Scroll viewport up by n lines (remove lines from top, add blank at bottom)
+                let viewport_start = self.state.grid.viewport_start;
+
+                // Remove n lines from viewport_start
+                let lines_to_remove = (n as usize).min(self.state.grid.viewport_height);
+                if viewport_start + lines_to_remove <= self.state.grid.cells.len() {
+                    self.state
+                        .grid
+                        .cells
+                        .drain(viewport_start..viewport_start + lines_to_remove);
+
+                    // Add blank lines at the end of viewport
+                    for _ in 0..lines_to_remove {
+                        let blank_row = vec![Cell::default(); self.state.grid.width];
+                        let insert_pos = (viewport_start + self.state.grid.viewport_height
+                            - lines_to_remove)
+                            .min(self.state.grid.cells.len());
+                        self.state.grid.cells.insert(insert_pos, blank_row);
+                    }
+                }
+            }
+
+            CsiCommand::DeleteCharacter { n } => {
+                // Delete n characters at cursor, shifting remaining chars left
+                let row = self.state.cursor.row;
+                let start_col = self.state.cursor.col;
+                let width = self.state.grid.width;
+
+                if start_col < width {
+                    // Get the current row
+                    let viewport_start = self.state.grid.viewport_start;
+                    let absolute_row = viewport_start + row;
+
+                    // Ensure row exists
+                    while absolute_row >= self.state.grid.cells.len() {
+                        self.state.grid.cells.push(vec![Cell::default(); width]);
+                    }
+
+                    let n_chars = (n as usize).min(width - start_col);
+
+                    // Shift characters left by removing n chars at cursor position
+                    for _ in 0..n_chars {
+                        if start_col < self.state.grid.cells[absolute_row].len() {
+                            self.state.grid.cells[absolute_row].remove(start_col);
+                        }
+                    }
+
+                    // Add blank cells at the end to maintain width
+                    while self.state.grid.cells[absolute_row].len() < width {
+                        self.state.grid.cells[absolute_row].push(Cell::default());
+                    }
+                }
+            }
+
+            CsiCommand::ResetMode { mode: _ } => {
+                // No-op: mode state tracking not yet implemented
+                // Common modes: 4 (Insert Mode), 20 (Automatic Newline)
             }
 
             CsiCommand::Unknown(_) => {
@@ -564,5 +749,619 @@ mod tests {
         assert_eq!(fg.r, 205);
         assert_eq!(fg.g, 49);
         assert_eq!(fg.b, 49);
+    }
+
+    #[test]
+    fn test_reverse_video_enables() {
+        let mut terminal = Terminal::new(80, 24);
+
+        // Enable reverse video with ESC[7m
+        terminal.process_bytes(b"\x1b[7m");
+
+        // Reverse flag should be set
+        assert!(terminal.state().reverse);
+    }
+
+    #[test]
+    fn test_reverse_video_disables() {
+        let mut terminal = Terminal::new(80, 24);
+
+        // Enable then disable reverse video
+        terminal.process_bytes(b"\x1b[7m");
+        assert!(terminal.state().reverse);
+
+        terminal.process_bytes(b"\x1b[27m");
+        assert!(!terminal.state().reverse);
+    }
+
+    #[test]
+    fn test_reverse_video_swaps_colors() {
+        let mut terminal = Terminal::new(80, 24);
+
+        // Set red foreground (ANSI 31) and blue background (ANSI 44)
+        terminal.process_bytes(b"\x1b[31;44m");
+
+        // Store original colors
+        let orig_fg = terminal.state().fg;
+        let orig_bg = terminal.state().bg;
+
+        // Enable reverse and print character
+        terminal.process_bytes(b"\x1b[7mX");
+
+        // Check cell has swapped colors
+        let viewport = terminal.state().grid.get_viewport();
+        let cell = &viewport[0][0];
+
+        assert_eq!(cell.ch, 'X');
+        assert!(cell.reverse);
+        // fg should be original bg, bg should be original fg
+        assert_eq!(cell.fg.r, orig_bg.r);
+        assert_eq!(cell.fg.g, orig_bg.g);
+        assert_eq!(cell.fg.b, orig_bg.b);
+        assert_eq!(cell.bg.r, orig_fg.r);
+        assert_eq!(cell.bg.g, orig_fg.g);
+        assert_eq!(cell.bg.b, orig_fg.b);
+    }
+
+    #[test]
+    fn test_reverse_video_reset() {
+        let mut terminal = Terminal::new(80, 24);
+
+        // Enable reverse video
+        terminal.process_bytes(b"\x1b[7m");
+        assert!(terminal.state().reverse);
+
+        // Reset with ESC[0m
+        terminal.process_bytes(b"\x1b[0m");
+
+        // Reverse should be cleared
+        assert!(!terminal.state().reverse);
+    }
+
+    #[test]
+    fn test_reverse_with_default_colors() {
+        let mut terminal = Terminal::new(80, 24);
+
+        // Default colors: white fg, black bg
+        let default_fg = terminal.state().fg;
+        let default_bg = terminal.state().bg;
+
+        // Enable reverse and print
+        terminal.process_bytes(b"\x1b[7mA");
+
+        let viewport = terminal.state().grid.get_viewport();
+        let cell = &viewport[0][0];
+
+        // Colors should be swapped
+        assert_eq!(cell.fg.r, default_bg.r);
+        assert_eq!(cell.fg.g, default_bg.g);
+        assert_eq!(cell.fg.b, default_bg.b);
+        assert_eq!(cell.bg.r, default_fg.r);
+        assert_eq!(cell.bg.g, default_fg.g);
+        assert_eq!(cell.bg.b, default_fg.b);
+    }
+
+    #[test]
+    fn test_multiple_reverse_toggles() {
+        let mut terminal = Terminal::new(80, 24);
+
+        // Toggle sequence: normal, reverse, normal, reverse
+        terminal.process_bytes(b"N\x1b[7mR\x1b[27mN\x1b[7mR");
+
+        let viewport = terminal.state().grid.get_viewport();
+
+        // First 'N' should have reverse=false
+        assert_eq!(viewport[0][0].ch, 'N');
+        assert!(!viewport[0][0].reverse);
+
+        // First 'R' should have reverse=true
+        assert_eq!(viewport[0][1].ch, 'R');
+        assert!(viewport[0][1].reverse);
+
+        // Second 'N' should have reverse=false
+        assert_eq!(viewport[0][2].ch, 'N');
+        assert!(!viewport[0][2].reverse);
+
+        // Second 'R' should have reverse=true
+        assert_eq!(viewport[0][3].ch, 'R');
+        assert!(viewport[0][3].reverse);
+    }
+
+    #[test]
+    fn test_reverse_preserves_other_attributes() {
+        let mut terminal = Terminal::new(80, 24);
+
+        // Set bold, italic, red foreground, then enable reverse
+        terminal.process_bytes(b"\x1b[1;3;31;7mX");
+
+        let viewport = terminal.state().grid.get_viewport();
+        let cell = &viewport[0][0];
+
+        // All attributes should be set
+        assert!(cell.bold);
+        assert!(cell.italic);
+        assert!(cell.reverse);
+    }
+
+    #[test]
+    fn test_vpa_basic() {
+        let mut terminal = Terminal::new(80, 24);
+        terminal.state_mut().cursor.col = 10;
+
+        // Move to row 15 (1-indexed -> 14 in 0-indexed)
+        terminal.process_bytes(b"\x1b[15d");
+
+        assert_eq!(terminal.state().cursor.row, 14);
+        assert_eq!(terminal.state().cursor.col, 10); // Column unchanged
+    }
+
+    #[test]
+    fn test_vpa_default() {
+        let mut terminal = Terminal::new(80, 24);
+        terminal.state_mut().cursor.row = 10;
+        terminal.state_mut().cursor.col = 20;
+
+        // VPA with no parameter defaults to row 1
+        terminal.process_bytes(b"\x1b[d");
+
+        assert_eq!(terminal.state().cursor.row, 0); // Row 1 -> index 0
+        assert_eq!(terminal.state().cursor.col, 20); // Column unchanged
+    }
+
+    #[test]
+    fn test_vpa_bounds() {
+        let mut terminal = Terminal::new(80, 24);
+
+        // Try to move beyond viewport height
+        terminal.process_bytes(b"\x1b[100d");
+
+        assert_eq!(terminal.state().cursor.row, 23); // Clamped to bottom (0-indexed)
+    }
+
+    #[test]
+    fn test_ech_basic() {
+        let mut terminal = Terminal::new(80, 24);
+
+        // Write some characters
+        terminal.process_bytes(b"ABCDEFGH");
+
+        // Move cursor back to C
+        terminal.state_mut().cursor.col = 2;
+
+        // Erase 3 characters (CDE)
+        terminal.process_bytes(b"\x1b[3X");
+
+        let viewport = terminal.state().grid.get_viewport();
+        assert_eq!(viewport[0][0].ch, 'A');
+        assert_eq!(viewport[0][1].ch, 'B');
+        assert_eq!(viewport[0][2].ch, ' '); // Erased
+        assert_eq!(viewport[0][3].ch, ' '); // Erased
+        assert_eq!(viewport[0][4].ch, ' '); // Erased
+        assert_eq!(viewport[0][5].ch, 'F'); // Not erased
+    }
+
+    #[test]
+    fn test_ech_default() {
+        let mut terminal = Terminal::new(80, 24);
+
+        terminal.process_bytes(b"HELLO");
+        terminal.state_mut().cursor.col = 1;
+
+        // ECH with no parameter erases 1 character
+        terminal.process_bytes(b"\x1b[X");
+
+        let viewport = terminal.state().grid.get_viewport();
+        assert_eq!(viewport[0][0].ch, 'H');
+        assert_eq!(viewport[0][1].ch, ' '); // Erased
+        assert_eq!(viewport[0][2].ch, 'L');
+    }
+
+    #[test]
+    fn test_ech_bounds() {
+        let mut terminal = Terminal::new(5, 24); // Narrow terminal
+
+        terminal.process_bytes(b"HELLO");
+        terminal.state_mut().cursor.col = 3;
+
+        // Try to erase 5 characters (should clamp to line width)
+        terminal.process_bytes(b"\x1b[5X");
+
+        let viewport = terminal.state().grid.get_viewport();
+        assert_eq!(viewport[0][0].ch, 'H');
+        assert_eq!(viewport[0][3].ch, ' '); // Erased
+        assert_eq!(viewport[0][4].ch, ' '); // Erased
+    }
+
+    #[test]
+    fn test_scroll_down_basic() {
+        let mut terminal = Terminal::new(80, 24);
+
+        // Write identifying text on first few lines
+        terminal.process_bytes(b"Line1\n\rLine2\n\rLine3");
+
+        // Scroll down by 2
+        terminal.process_bytes(b"\x1b[2T");
+
+        let viewport = terminal.state().grid.get_viewport();
+        // First 2 lines should be blank (scrolled down)
+        assert_eq!(viewport[0][0].ch, ' ');
+        assert_eq!(viewport[1][0].ch, ' ');
+        // Original line 1 should now be at row 2
+        assert_eq!(viewport[2][0].ch, 'L');
+        assert_eq!(viewport[2][1].ch, 'i');
+    }
+
+    #[test]
+    fn test_scroll_down_default() {
+        let mut terminal = Terminal::new(80, 24);
+
+        terminal.process_bytes(b"Test");
+
+        // SD with no parameter scrolls 1 line
+        terminal.process_bytes(b"\x1b[T");
+
+        let viewport = terminal.state().grid.get_viewport();
+        assert_eq!(viewport[0][0].ch, ' '); // Blank line inserted
+        assert_eq!(viewport[1][0].ch, 'T'); // Original content shifted down
+    }
+
+    #[test]
+    fn test_auto_wrap_enabled() {
+        let mut terminal = Terminal::new(5, 24); // Narrow terminal
+
+        // Enable auto wrap (default, but explicit)
+        terminal.process_bytes(b"\x1b[?7h");
+
+        // Write more than width
+        terminal.process_bytes(b"123456");
+
+        let viewport = terminal.state().grid.get_viewport();
+        // Should wrap to next line
+        assert_eq!(viewport[0][4].ch, '5');
+        assert_eq!(viewport[1][0].ch, '6');
+    }
+
+    #[test]
+    fn test_auto_wrap_disabled() {
+        let mut terminal = Terminal::new(5, 24);
+
+        // Disable auto wrap
+        terminal.process_bytes(b"\x1b[?7l");
+
+        // Write more than width
+        terminal.process_bytes(b"123456");
+
+        let viewport = terminal.state().grid.get_viewport();
+        // Should overwrite last position
+        assert_eq!(viewport[0][4].ch, '6'); // Overwrote '5'
+        assert_eq!(viewport[1][0].ch, ' '); // No wrap
+    }
+
+    #[test]
+    fn test_auto_wrap_default() {
+        let terminal = Terminal::new(80, 24);
+
+        // Verify default is enabled (true)
+        assert!(terminal.state().auto_wrap);
+    }
+
+    #[test]
+    fn test_auto_wrap_toggle() {
+        let mut terminal = Terminal::new(5, 24);
+
+        // Default is enabled
+        assert!(terminal.state().auto_wrap);
+
+        // Disable
+        terminal.process_bytes(b"\x1b[?7l");
+        assert!(!terminal.state().auto_wrap);
+
+        // Enable
+        terminal.process_bytes(b"\x1b[?7h");
+        assert!(terminal.state().auto_wrap);
+    }
+
+    #[test]
+    fn test_scroll_up_basic() {
+        let mut terminal = Terminal::new(80, 24);
+
+        // Write multiple lines
+        terminal.process_bytes(b"Line1\n\rLine2\n\rLine3\n\rLine4");
+
+        // Scroll up by 2 (removes top 2 lines, adds blanks at bottom)
+        terminal.process_bytes(b"\x1b[2S");
+
+        let viewport = terminal.state().grid.get_viewport();
+        // Line3 should now be at top (lines 1-2 removed)
+        assert_eq!(viewport[0][0].ch, 'L');
+        assert_eq!(viewport[0][4].ch, '3');
+    }
+
+    #[test]
+    fn test_scroll_up_default() {
+        let mut terminal = Terminal::new(80, 24);
+
+        terminal.process_bytes(b"Line1\n\rLine2");
+
+        // SU with no parameter scrolls 1 line
+        terminal.process_bytes(b"\x1b[S");
+
+        let viewport = terminal.state().grid.get_viewport();
+        // Line2 should now be at top
+        assert_eq!(viewport[0][0].ch, 'L');
+        assert_eq!(viewport[0][4].ch, '2');
+    }
+
+    #[test]
+    fn test_delete_character_basic() {
+        let mut terminal = Terminal::new(80, 24);
+
+        // Write some text
+        terminal.process_bytes(b"ABCDEFGH");
+
+        // Move cursor back to C (position 2)
+        terminal.state_mut().cursor.col = 2;
+
+        // Delete 3 characters (CDE) - FGH should shift left
+        terminal.process_bytes(b"\x1b[3P");
+
+        let viewport = terminal.state().grid.get_viewport();
+        assert_eq!(viewport[0][0].ch, 'A');
+        assert_eq!(viewport[0][1].ch, 'B');
+        assert_eq!(viewport[0][2].ch, 'F'); // Shifted left from position 5
+        assert_eq!(viewport[0][3].ch, 'G'); // Shifted left from position 6
+        assert_eq!(viewport[0][4].ch, 'H'); // Shifted left from position 7
+        assert_eq!(viewport[0][5].ch, ' '); // Blank fill
+    }
+
+    #[test]
+    fn test_delete_character_default() {
+        let mut terminal = Terminal::new(80, 24);
+
+        terminal.process_bytes(b"HELLO");
+        terminal.state_mut().cursor.col = 1;
+
+        // DCH with no parameter deletes 1 character
+        terminal.process_bytes(b"\x1b[P");
+
+        let viewport = terminal.state().grid.get_viewport();
+        assert_eq!(viewport[0][0].ch, 'H');
+        assert_eq!(viewport[0][1].ch, 'L'); // Shifted left (was at position 2)
+        assert_eq!(viewport[0][2].ch, 'L'); // Shifted left (was at position 3)
+        assert_eq!(viewport[0][3].ch, 'O'); // Shifted left (was at position 4)
+        assert_eq!(viewport[0][4].ch, ' '); // Blank fill
+    }
+
+    #[test]
+    fn test_delete_character_vs_erase() {
+        let mut terminal = Terminal::new(80, 24);
+
+        // Test DCH (Delete Character - shifts left)
+        terminal.process_bytes(b"ABCD");
+        terminal.state_mut().cursor.col = 1;
+        terminal.process_bytes(b"\x1b[1P"); // Delete 'B'
+
+        {
+            let viewport = terminal.state().grid.get_viewport();
+            assert_eq!(viewport[0][0].ch, 'A');
+            assert_eq!(viewport[0][1].ch, 'C'); // Shifted left
+            assert_eq!(viewport[0][2].ch, 'D'); // Shifted left
+        } // viewport dropped here
+
+        // Compare with ECH (Erase Character - no shift)
+        terminal.state_mut().cursor.row = 1;
+        terminal.state_mut().cursor.col = 0;
+        terminal.process_bytes(b"ABCD");
+        terminal.state_mut().cursor.col = 1;
+        terminal.process_bytes(b"\x1b[1X"); // Erase 'B'
+
+        let viewport = terminal.state().grid.get_viewport(); // Fresh borrow
+        assert_eq!(viewport[1][0].ch, 'A');
+        assert_eq!(viewport[1][1].ch, ' '); // Erased, not shifted
+        assert_eq!(viewport[1][2].ch, 'C'); // Stayed in place
+        assert_eq!(viewport[1][3].ch, 'D'); // Stayed in place
+    }
+
+    #[test]
+    fn test_reset_mode_basic() {
+        let mut terminal = Terminal::new(80, 24);
+
+        // ESC[4l - Reset Insert Mode
+        terminal.process_bytes(b"\x1b[4l");
+
+        // Should not panic or produce errors
+        // Terminal should remain functional
+        terminal.process_bytes(b"TEST");
+        let viewport = terminal.state().grid.get_viewport();
+        assert_eq!(viewport[0][0].ch, 'T');
+    }
+
+    #[test]
+    fn test_reset_mode_default() {
+        let mut terminal = Terminal::new(80, 24);
+
+        // ESC[l - Reset with default mode 0
+        terminal.process_bytes(b"\x1b[l");
+
+        // Should parse without error
+        terminal.process_bytes(b"OK");
+        let viewport = terminal.state().grid.get_viewport();
+        assert_eq!(viewport[0][0].ch, 'O');
+    }
+
+    #[test]
+    fn test_reset_mode_multiple() {
+        let mut terminal = Terminal::new(80, 24);
+
+        // Test multiple reset mode sequences
+        terminal.process_bytes(b"\x1b[4l"); // Insert Mode
+        terminal.process_bytes(b"\x1b[20l"); // Automatic Newline
+
+        // All should parse successfully
+        terminal.process_bytes(b"PASS");
+        let viewport = terminal.state().grid.get_viewport();
+        assert_eq!(viewport[0][0].ch, 'P');
+    }
+
+    #[test]
+    fn test_dec_application_cursor_keys_no_op() {
+        let mut terminal = Terminal::new(80, 24);
+
+        // Set and reset application cursor keys mode
+        terminal.process_bytes(b"\x1b[?1h"); // Set
+        terminal.process_bytes(b"\x1b[?1l"); // Reset
+
+        // Should process silently without warnings
+        // Terminal remains functional
+        terminal.process_bytes(b"OK");
+        let viewport = terminal.state().grid.get_viewport();
+        assert_eq!(viewport[0][0].ch, 'O');
+    }
+
+    #[test]
+    fn test_dec_show_cursor_no_op() {
+        let mut terminal = Terminal::new(80, 24);
+
+        // Set and reset show cursor mode
+        terminal.process_bytes(b"\x1b[?25h"); // Show
+        terminal.process_bytes(b"\x1b[?25l"); // Hide
+
+        // Should process silently
+        terminal.process_bytes(b"OK");
+        let viewport = terminal.state().grid.get_viewport();
+        assert_eq!(viewport[0][0].ch, 'O');
+    }
+
+    #[test]
+    fn test_dec_bracketed_paste_no_op() {
+        let mut terminal = Terminal::new(80, 24);
+
+        // Set and reset bracketed paste mode
+        terminal.process_bytes(b"\x1b[?2004h"); // Enable
+        terminal.process_bytes(b"\x1b[?2004l"); // Disable
+
+        // Should process silently
+        terminal.process_bytes(b"OK");
+        let viewport = terminal.state().grid.get_viewport();
+        assert_eq!(viewport[0][0].ch, 'O');
+    }
+
+    #[test]
+    fn test_dec_mouse_sgr_no_op() {
+        let mut terminal = Terminal::new(80, 24);
+
+        // Set and reset mouse SGR mode
+        terminal.process_bytes(b"\x1b[?1006h"); // Enable
+        terminal.process_bytes(b"\x1b[?1006l"); // Disable
+
+        // Should process silently
+        terminal.process_bytes(b"OK");
+        let viewport = terminal.state().grid.get_viewport();
+        assert_eq!(viewport[0][0].ch, 'O');
+    }
+
+    #[test]
+    fn test_bracketed_paste_mode() {
+        let mut terminal = Terminal::new(80, 24);
+
+        // Initially false
+        assert!(!terminal.state().bracketed_paste);
+
+        // Enable bracketed paste
+        terminal.process_bytes(b"\x1b[?2004h");
+        assert!(terminal.state().bracketed_paste);
+
+        // Disable bracketed paste
+        terminal.process_bytes(b"\x1b[?2004l");
+        assert!(!terminal.state().bracketed_paste);
+    }
+
+    #[test]
+    fn test_application_cursor_keys_mode() {
+        let mut terminal = Terminal::new(80, 24);
+
+        // Initially false
+        assert!(!terminal.state().application_cursor_keys);
+
+        // Enable application cursor keys
+        terminal.process_bytes(b"\x1b[?1h");
+        assert!(terminal.state().application_cursor_keys);
+
+        // Disable application cursor keys
+        terminal.process_bytes(b"\x1b[?1l");
+        assert!(!terminal.state().application_cursor_keys);
+    }
+
+    #[test]
+    fn test_show_cursor_mode() {
+        let mut terminal = Terminal::new(80, 24);
+
+        // Initially true (cursor visible by default)
+        assert!(terminal.state().show_cursor);
+
+        // Hide cursor
+        terminal.process_bytes(b"\x1b[?25l");
+        assert!(!terminal.state().show_cursor);
+
+        // Show cursor
+        terminal.process_bytes(b"\x1b[?25h");
+        assert!(terminal.state().show_cursor);
+    }
+
+    #[test]
+    fn test_cursor_blink_mode() {
+        let mut terminal = Terminal::new(80, 24);
+
+        // Initially false (no blinking by default)
+        assert!(!terminal.state().cursor_blink);
+
+        // Enable cursor blinking
+        terminal.process_bytes(b"\x1b[?12h");
+        assert!(terminal.state().cursor_blink);
+
+        // Disable cursor blinking
+        terminal.process_bytes(b"\x1b[?12l");
+        assert!(!terminal.state().cursor_blink);
+    }
+
+    #[test]
+    fn test_mouse_sgr_mode() {
+        let mut terminal = Terminal::new(80, 24);
+
+        // Initially false
+        assert!(!terminal.state().mouse_sgr);
+
+        // Enable SGR mouse tracking
+        terminal.process_bytes(b"\x1b[?1006h");
+        assert!(terminal.state().mouse_sgr);
+
+        // Disable SGR mouse tracking
+        terminal.process_bytes(b"\x1b[?1006l");
+        assert!(!terminal.state().mouse_sgr);
+    }
+
+    #[test]
+    fn test_all_dec_modes_no_warnings() {
+        let mut terminal = Terminal::new(80, 24);
+
+        // Process all DEC modes that should be no-ops
+        terminal.process_bytes(b"\x1b[?1h"); // ApplicationCursorKeys set
+        terminal.process_bytes(b"\x1b[?1l"); // ApplicationCursorKeys reset
+        terminal.process_bytes(b"\x1b[?25h"); // ShowCursor set
+        terminal.process_bytes(b"\x1b[?25l"); // ShowCursor reset
+        terminal.process_bytes(b"\x1b[?2004h"); // BracketedPaste set
+        terminal.process_bytes(b"\x1b[?2004l"); // BracketedPaste reset
+        terminal.process_bytes(b"\x1b[?1006h"); // MouseSGR set
+        terminal.process_bytes(b"\x1b[?1006l"); // MouseSGR reset
+        terminal.process_bytes(b"\x1b[?12h"); // CursorBlink set
+        terminal.process_bytes(b"\x1b[?12l"); // CursorBlink reset
+
+        // All should succeed without warnings
+        terminal.process_bytes(b"PASS");
+        let viewport = terminal.state().grid.get_viewport();
+        assert_eq!(viewport[0][0].ch, 'P');
+        assert_eq!(viewport[0][1].ch, 'A');
+        assert_eq!(viewport[0][2].ch, 'S');
+        assert_eq!(viewport[0][3].ch, 'S');
     }
 }

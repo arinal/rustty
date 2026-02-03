@@ -1,6 +1,6 @@
 # Rustty Terminal Emulator
 
-A modern terminal emulator written in Rust, featuring CPU-based rendering and efficient event-driven architecture.
+A modern terminal emulator written in Rust with both CPU and GPU rendering options and efficient event-driven architecture.
 
 **What will make Rustty different?** Planned smooth pixel-level scrolling, similar to NeoVide. Unlike traditional terminal emulators that scroll by whole character lines, Rustty will enable buttery-smooth scrolling animations.
 
@@ -15,7 +15,7 @@ A modern terminal emulator written in Rust, featuring CPU-based rendering and ef
 - ✅ **Event-Driven Architecture** - Dedicated reader thread for near-zero CPU usage when idle
 - ✅ **Dynamic Grid Sizing** - Terminal grid resizes with window, preserving content
 - ✅ **Scrollback Buffer** - 10,000 line scrollback history
-- ✅ **CPU-Based Rendering** - Using Raqote for cross-platform text rendering
+- ✅ **Dual Rendering Options** - Choose between CPU (Raqote) or GPU (wgpu) rendering
 - ✅ **Keyboard Input** - Full keyboard support including arrow keys, function keys, and Ctrl combinations
 
 ## Architecture
@@ -66,10 +66,10 @@ Rustty is organized as a **library + binary**:
 - Exports: `Terminal`, `Shell`, `TerminalGrid`, `Cell`, `Color`, etc.
 - Can be used to build custom terminal UIs
 
-**Binary** (`src/bin/rustty.rs`):
-- **UI implementation** using winit + raqote + softbuffer (~460 lines)
-- Imports terminal types from library
-- Handles window management, rendering, and event processing
+**Binaries**:
+- **CPU Binary** (`src/bin/rustty.rs`) - Default, uses Raqote + Softbuffer
+- **GPU Binary** (`src/bin/rustty_gpu.rs`) - Hardware-accelerated, uses wgpu
+- Both import terminal types from library and handle window management
 
 **Terminal modules**:
 - **`mod.rs`** - Terminal struct with VTE Perform implementation
@@ -90,17 +90,52 @@ Rustty is organized as a **library + binary**:
   - `fontconfig`
   - `freetype`
 
+### Rendering Backends
+
+Rustty offers two rendering backends via Cargo feature flags:
+
+**CPU Renderer (`rustty`)** - Default
+- Uses Raqote for software rendering
+- Better compatibility (works on all systems)
+- Lower memory usage
+- Good for general use
+
+**GPU Renderer (`rustty-gpu`)**
+- Uses wgpu for hardware-accelerated rendering
+- Better performance on large windows
+- Foundation for future smooth scrolling
+- Requires GPU drivers
+
 ### Build Commands
 
+**CPU Renderer (Default):**
 ```bash
-# Development build
-cargo build
+# Build CPU binary
+cargo build --bin rustty
 
-# Release build (optimized)
-cargo build --release
+# Run CPU binary
+cargo run --bin rustty
 
-# Run
-cargo run
+# Release build
+cargo build --bin rustty --release
+```
+
+**GPU Renderer:**
+```bash
+# Build GPU binary
+cargo build --bin rustty-gpu --features ui-gpu
+
+# Run GPU binary
+cargo run --bin rustty-gpu --features ui-gpu
+
+# Release build
+cargo build --bin rustty-gpu --features ui-gpu --release
+```
+
+**Both Binaries:**
+```bash
+# Build both
+cargo build --all-features
 
 # Run tests
 cargo test
@@ -264,8 +299,8 @@ Test the 256-color palette support:
 - [ ] Selection and clipboard support
 
 ### Long-term
-- [ ] **Smooth pixel-level scrolling** (inspired by NeoVide)
-- [ ] GPU rendering with wgpu (replace Raqote)
+- [x] GPU rendering with wgpu ✨ **NEW!**
+- [ ] **Smooth pixel-level scrolling** (inspired by NeoVide) - Will leverage GPU renderer
 - [ ] Configuration file support
 - [ ] Mouse support (SGR mouse mode)
 - [ ] Ligature support
@@ -278,11 +313,19 @@ Test the 256-color palette support:
 - **`vte`** - ANSI escape sequence parser
 - **`anyhow`** - Error handling
 
-### Binary Dependencies (UI Implementation)
+### Shared Binary Dependencies
 - **`winit`** - Cross-platform window creation
-- **`raqote`** - 2D graphics rendering
-- **`softbuffer`** - Software rendering backend
 - **`font-kit`** - Font loading and metrics
+
+### CPU Binary Dependencies (`rustty`)
+- **`raqote`** - 2D graphics rendering (CPU-based)
+- **`softbuffer`** - Software rendering backend
+
+### GPU Binary Dependencies (`rustty-gpu`)
+- **`wgpu`** - WebGPU API for hardware-accelerated rendering
+- **`pollster`** - Async executor for wgpu initialization
+- **`bytemuck`** - Safe type casting for GPU buffers
+- **`pathfinder_geometry`** - Geometric primitives for glyph rasterization
 
 ## License
 
