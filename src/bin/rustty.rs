@@ -3,7 +3,7 @@ use font_kit::family_name::FamilyName;
 use font_kit::properties::Properties;
 use font_kit::source::SystemSource;
 use raqote::{DrawTarget, SolidSource, Source};
-use rustty::terminal::{Shell, Terminal};
+use rustty::TerminalSession;
 use softbuffer::{Context, Surface};
 use std::num::NonZeroU32;
 use std::rc::Rc;
@@ -14,12 +14,18 @@ use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::keyboard::{Key, ModifiersState, NamedKey};
 use winit::window::{Window, WindowId};
 
+fn main() -> Result<()> {
+    let event_loop = EventLoop::new().context("Failed to create event loop")?;
+    let mut app = App::new();
+    event_loop.run_app(&mut app)?;
+    Ok(())
+}
+
 pub struct App {
     window: Option<Rc<Window>>,
     surface: Option<Surface<Rc<Window>, Rc<Window>>>,
-    terminal: Terminal,
+    session: TerminalSession,
     pub font: Option<font_kit::font::Font>,
-    shell: Option<Shell>,
     // Character dimensions
     char_width: f32,
     char_height: f32,
@@ -48,10 +54,7 @@ impl App {
             .ok()
             .and_then(|handle| handle.load().ok());
 
-        let shell = Shell::new(80, 24).ok();
-        if shell.is_none() {
-            eprintln!("Failed to create shell");
-        }
+        let session = TerminalSession::new(80, 24).expect("Failed to create terminal session");
 
         // Calculate character dimensions (will be updated when window is created)
         let font_size = 16.0;
@@ -61,9 +64,8 @@ impl App {
         Self {
             window: None,
             surface: None,
-            terminal: Terminal::new(80, 24),
+            session,
             font,
-            shell,
             char_width,
             char_height,
             font_size,
@@ -78,53 +80,16 @@ impl App {
         (cols.max(10), rows.max(3)) // Minimum 10x3
     }
 
-    /// Resize terminal grid and shell
-    fn resize_terminal(&mut self, cols: usize, rows: usize) {
-        // Resize terminal (preserves existing content and clamps cursor)
-        self.terminal.resize(cols, rows);
-
-        // Update shell PTY size
-        if let Some(shell) = &mut self.shell
-            && let Err(e) = shell.resize(cols as u16, rows as u16)
-        {
-            eprintln!("Failed to resize shell: {}", e);
-        }
-    }
-
     fn process_shell_output(&mut self) -> bool {
         // Check for shell output from the reader thread (non-blocking)
         // Returns false if the child process has exited
-        if let Some(ref shell) = self.shell {
-            let mut has_data = false;
+        let still_running = self.session.process_output();
 
-            // Drain all available messages from the channel
-            loop {
-                match shell.receiver.try_recv() {
-                    Ok(data) => {
-                        has_data = true;
-                        // Process bytes through the terminal (VTE parser + state updates)
-                        self.terminal.process_bytes(&data);
-                    }
-                    Err(std::sync::mpsc::TryRecvError::Empty) => {
-                        // No more data available right now
-                        break;
-                    }
-                    Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-                        // Channel closed - child process has exited
-                        eprintln!("Child process exited");
-                        return false;
-                    }
-                }
-            }
-
-            if has_data {
-                self.terminal.state_mut().grid.viewport_to_end();
-                if let Some(window) = &self.window {
-                    window.request_redraw();
-                }
-            }
+        if let Some(window) = &self.window {
+            window.request_redraw();
         }
-        true
+
+        still_running
     }
 
     fn render(&mut self) -> Result<()> {
@@ -149,7 +114,7 @@ impl App {
             let offset_x = 10.0;
             let offset_y = 20.0;
 
-            let viewport = self.terminal.state().grid.get_viewport();
+            let viewport = self.session.state().grid.get_viewport();
             for (row, line) in viewport.iter().enumerate() {
                 for (col, cell) in line.iter().enumerate() {
                     let x = offset_x + col as f32 * self.char_width;
@@ -204,13 +169,13 @@ impl App {
             // Draw cursor
             // Calculate cursor position relative to viewport
             let cursor_viewport_row = self
-                .terminal
+                .session
                 .state()
                 .cursor
                 .row
-                .saturating_sub(self.terminal.state().grid.viewport_start);
-            if cursor_viewport_row < self.terminal.state().grid.viewport_height {
-                let cursor_x = offset_x + self.terminal.state().cursor.col as f32 * self.char_width;
+                .saturating_sub(self.session.state().grid.viewport_start);
+            if cursor_viewport_row < self.session.state().grid.viewport_height {
+                let cursor_x = offset_x + self.session.state().cursor.col as f32 * self.char_width;
                 let cursor_y = offset_y + cursor_viewport_row as f32 * self.char_height;
 
                 // Draw cursor as a filled rectangle (block cursor)
@@ -256,61 +221,59 @@ impl App {
     }
 
     fn handle_keyboard_input(&mut self, key: &Key, text: Option<&str>) {
-        if let Some(shell) = &mut self.shell {
-            let bytes = match key {
-                Key::Named(named) => match named {
-                    NamedKey::Enter => Some(b"\r".to_vec()),
-                    NamedKey::Backspace => Some(b"\x7f".to_vec()),
-                    NamedKey::Tab => Some(b"\t".to_vec()),
-                    NamedKey::Space => Some(b" ".to_vec()),
-                    NamedKey::Escape => Some(b"\x1b".to_vec()),
-                    NamedKey::ArrowUp => Some(b"\x1b[A".to_vec()),
-                    NamedKey::ArrowDown => Some(b"\x1b[B".to_vec()),
-                    NamedKey::ArrowRight => Some(b"\x1b[C".to_vec()),
-                    NamedKey::ArrowLeft => Some(b"\x1b[D".to_vec()),
-                    NamedKey::Home => Some(b"\x1b[H".to_vec()),
-                    NamedKey::End => Some(b"\x1b[F".to_vec()),
-                    NamedKey::PageUp => Some(b"\x1b[5~".to_vec()),
-                    NamedKey::PageDown => Some(b"\x1b[6~".to_vec()),
-                    NamedKey::Delete => Some(b"\x1b[3~".to_vec()),
-                    NamedKey::Insert => Some(b"\x1b[2~".to_vec()),
-                    _ => None,
-                },
-                Key::Character(s) => {
-                    let chars: Vec<char> = s.chars().collect();
-                    if chars.len() == 1 {
-                        let ch = chars[0];
+        let bytes = match key {
+            Key::Named(named) => match named {
+                NamedKey::Enter => Some(b"\r".to_vec()),
+                NamedKey::Backspace => Some(b"\x7f".to_vec()),
+                NamedKey::Tab => Some(b"\t".to_vec()),
+                NamedKey::Space => Some(b" ".to_vec()),
+                NamedKey::Escape => Some(b"\x1b".to_vec()),
+                NamedKey::ArrowUp => Some(b"\x1b[A".to_vec()),
+                NamedKey::ArrowDown => Some(b"\x1b[B".to_vec()),
+                NamedKey::ArrowRight => Some(b"\x1b[C".to_vec()),
+                NamedKey::ArrowLeft => Some(b"\x1b[D".to_vec()),
+                NamedKey::Home => Some(b"\x1b[H".to_vec()),
+                NamedKey::End => Some(b"\x1b[F".to_vec()),
+                NamedKey::PageUp => Some(b"\x1b[5~".to_vec()),
+                NamedKey::PageDown => Some(b"\x1b[6~".to_vec()),
+                NamedKey::Delete => Some(b"\x1b[3~".to_vec()),
+                NamedKey::Insert => Some(b"\x1b[2~".to_vec()),
+                _ => None,
+            },
+            Key::Character(s) => {
+                let chars: Vec<char> = s.chars().collect();
+                if chars.len() == 1 {
+                    let ch = chars[0];
 
-                        // Check if Ctrl modifier is pressed
-                        if self.modifiers.control_key() && ch.is_ascii_alphabetic() {
-                            // Ctrl+letter produces control codes 1-26
-                            // Ctrl+A = 1, Ctrl+B = 2, ..., Ctrl+Z = 26
-                            // Ctrl+R = 18 (0x12) triggers reverse history search in shells
-                            let lower = ch.to_ascii_lowercase();
-                            let ctrl_code = (lower as u8) - b'a' + 1;
-                            Some(vec![ctrl_code])
-                        } else if let Some(text_str) = text {
-                            // Normal character - use the text provided by winit
-                            Some(text_str.as_bytes().to_vec())
-                        } else {
-                            // Fallback - send the character as-is
-                            Some(s.as_bytes().to_vec())
-                        }
+                    // Check if Ctrl modifier is pressed
+                    if self.modifiers.control_key() && ch.is_ascii_alphabetic() {
+                        // Ctrl+letter produces control codes 1-26
+                        // Ctrl+A = 1, Ctrl+B = 2, ..., Ctrl+Z = 26
+                        // Ctrl+R = 18 (0x12) triggers reverse history search in shells
+                        let lower = ch.to_ascii_lowercase();
+                        let ctrl_code = (lower as u8) - b'a' + 1;
+                        Some(vec![ctrl_code])
                     } else if let Some(text_str) = text {
-                        // Multi-character string - use text from winit
+                        // Normal character - use the text provided by winit
                         Some(text_str.as_bytes().to_vec())
                     } else {
+                        // Fallback - send the character as-is
                         Some(s.as_bytes().to_vec())
                     }
+                } else if let Some(text_str) = text {
+                    // Multi-character string - use text from winit
+                    Some(text_str.as_bytes().to_vec())
+                } else {
+                    Some(s.as_bytes().to_vec())
                 }
-                _ => None,
-            };
-
-            if let Some(data) = bytes
-                && let Err(e) = shell.write(&data)
-            {
-                eprintln!("Failed to write to shell: {}", e);
             }
+            _ => None,
+        };
+
+        if let Some(data) = bytes
+            && let Err(e) = self.session.write_input(&data)
+        {
+            eprintln!("Failed to write to shell: {}", e);
         }
     }
 }
@@ -361,7 +324,7 @@ impl ApplicationHandler for App {
             self.surface = Some(surface);
 
             // Resize terminal to match window
-            self.resize_terminal(cols, rows);
+            self.session.resize(cols, rows);
 
             println!("Rendering initial frame...");
             if let Err(e) = self.render() {
@@ -428,7 +391,7 @@ impl ApplicationHandler for App {
                     "Window resized to: {}x{} -> grid: {}x{}",
                     new_size.width, new_size.height, cols, rows
                 );
-                self.resize_terminal(cols, rows);
+                self.session.resize(cols, rows);
                 if let Some(window) = &self.window {
                     window.request_redraw();
                 }
@@ -436,11 +399,4 @@ impl ApplicationHandler for App {
             _ => {}
         }
     }
-}
-
-fn main() -> Result<()> {
-    let event_loop = EventLoop::new().context("Failed to create event loop")?;
-    let mut app = App::new();
-    event_loop.run_app(&mut app)?;
-    Ok(())
 }

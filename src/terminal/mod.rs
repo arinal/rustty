@@ -13,7 +13,6 @@ pub mod command;
 pub mod color;
 pub mod cursor;
 pub mod grid;
-pub mod shell;
 pub mod state;
 
 // Re-export commonly used types
@@ -21,7 +20,6 @@ pub use command::{AnsiParseError, CsiCommand, DecPrivateMode, EraseMode, SgrPara
 pub use color::Color;
 pub use cursor::Cursor;
 pub use grid::{Cell, TerminalGrid};
-pub use shell::Shell;
 pub use state::TerminalState;
 
 use vte::{Params, Parser, Perform};
