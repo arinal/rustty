@@ -6,9 +6,10 @@
 //! - Terminal grid with scrollback and alternate screen buffer
 //! - Color support (256-color palette + RGB true color)
 //! - Terminal session orchestration via TerminalSession
+//! - Rendering backends (CPU via Raqote, GPU via wgpu)
 //!
-//! This library has zero UI dependencies - it only handles terminal logic.
-//! For a complete terminal emulator application, see the `rustty` binary.
+//! The core terminal emulation has zero UI dependencies. Rendering backends are
+//! available as optional features for building complete terminal emulator applications.
 //!
 //! ## Quick Start
 //!
@@ -37,11 +38,14 @@ pub mod shell;
 // Terminal emulation module (all terminal-related functionality)
 pub mod terminal;
 
+// Rendering backends (CPU and GPU)
+pub mod renderer;
+
 // Re-export commonly used types
 pub use shell::Shell;
 pub use terminal::{
-    AnsiParseError, Cell, Color, CsiCommand, Cursor, DecPrivateMode, EraseMode, SgrParameter,
-    Terminal, TerminalGrid, TerminalState,
+    AnsiParseError, Cell, Color, CsiCommand, Cursor, CursorStyle, DecPrivateMode, EraseMode,
+    SgrParameter, Terminal, TerminalGrid, TerminalState,
 };
 
 /// Terminal session that orchestrates Terminal and Shell

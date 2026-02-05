@@ -18,7 +18,7 @@ pub mod state;
 // Re-export commonly used types
 pub use color::Color;
 pub use command::{AnsiParseError, CsiCommand, DecPrivateMode, EraseMode, SgrParameter};
-pub use cursor::Cursor;
+pub use cursor::{Cursor, CursorStyle};
 pub use grid::{Cell, TerminalGrid};
 pub use state::TerminalState;
 
@@ -178,6 +178,18 @@ impl Terminal {
                 // Enable SGR mouse tracking
                 self.state.mouse_sgr = true;
             }
+            DecPrivateMode::FocusEvents => {
+                // Enable focus event reporting
+                self.state.focus_events = true;
+            }
+            DecPrivateMode::MouseTracking => {
+                // Enable mouse button event reporting
+                self.state.mouse_tracking = true;
+            }
+            DecPrivateMode::MouseCellMotion => {
+                // Enable mouse button + drag reporting
+                self.state.mouse_cell_motion = true;
+            }
             DecPrivateMode::Unknown(mode) => {
                 eprintln!("[ANSI] Unknown DEC private mode (set): {}", mode);
             }
@@ -223,6 +235,18 @@ impl Terminal {
             DecPrivateMode::MouseSGR => {
                 // Disable SGR mouse tracking
                 self.state.mouse_sgr = false;
+            }
+            DecPrivateMode::FocusEvents => {
+                // Disable focus event reporting
+                self.state.focus_events = false;
+            }
+            DecPrivateMode::MouseTracking => {
+                // Disable mouse button event reporting
+                self.state.mouse_tracking = false;
+            }
+            DecPrivateMode::MouseCellMotion => {
+                // Disable mouse button + drag reporting
+                self.state.mouse_cell_motion = false;
             }
             DecPrivateMode::Unknown(mode) => {
                 eprintln!("[ANSI] Unknown DEC private mode (reset): {}", mode);
@@ -477,7 +501,18 @@ impl Perform for Terminal {
             // Erase operations
             CsiCommand::EraseInDisplay { mode } => match mode {
                 EraseMode::ToEnd => {
-                    self.state.grid.clear_line(self.state.cursor.row);
+                    // Clear from cursor to end of current line
+                    for col in self.state.cursor.col..self.state.grid.width {
+                        self.state
+                            .grid
+                            .put_cell(Cell::default(), self.state.cursor.row, col);
+                    }
+                    // Clear all lines below cursor to end of viewport
+                    let viewport_end =
+                        self.state.grid.viewport_start + self.state.grid.viewport_height;
+                    for row in (self.state.cursor.row + 1)..viewport_end {
+                        self.state.grid.clear_line(row);
+                    }
                 }
                 EraseMode::All => {
                     self.state.grid.clear_viewport();
@@ -527,25 +562,35 @@ impl Perform for Terminal {
                 }
             },
 
-            // Scrolling region
+            // Scrolling region (DECSTBM)
             CsiCommand::SetScrollingRegion { top, bottom } => {
-                // Store scrolling region in state
-                // This requires adding scrolling region fields to TerminalState
-                // For now, this is a no-op
-                let _ = (top, bottom);
+                // Convert from 1-indexed to 0-indexed
+                // top=0, bottom=0 means reset to full screen
+                if top == 0 && bottom == 0 {
+                    self.state.grid.reset_scroll_region();
+                } else if top > 0 && bottom > 0 {
+                    let top_idx = (top as usize).saturating_sub(1);
+                    let bottom_idx = (bottom as usize).saturating_sub(1);
+                    self.state.grid.set_scroll_region(top_idx, bottom_idx);
+                }
+                // Move cursor to home position (required by VT100 spec)
+                self.state.cursor.row = self.state.grid.viewport_start;
+                self.state.cursor.col = 0;
             }
 
-            // Line manipulation
+            // Line manipulation (IL/DL)
             CsiCommand::InsertLines { n } => {
-                // Insert n blank lines at cursor position
-                // This requires grid method for line insertion
-                let _ = n;
+                // Insert n blank lines at cursor position within scrolling region
+                let count = n.max(1) as usize;
+                let cursor_row = self.state.cursor.row - self.state.grid.viewport_start;
+                self.state.grid.insert_lines(cursor_row, count);
             }
 
             CsiCommand::DeleteLines { n } => {
-                // Delete n lines at cursor position
-                // This requires grid method for line deletion
-                let _ = n;
+                // Delete n lines at cursor position within scrolling region
+                let count = n.max(1) as usize;
+                let cursor_row = self.state.cursor.row - self.state.grid.viewport_start;
+                self.state.grid.delete_lines(cursor_row, count);
             }
 
             // Already handled above
@@ -567,9 +612,26 @@ impl Perform for Terminal {
                 // Not implementable at core level
             }
 
-            CsiCommand::SetCursorStyle { .. } => {
+            CsiCommand::SetCursorStyle { style } => {
                 // Set cursor style (block, underline, bar)
-                // Requires cursor style in state
+                // DECSCUSR: 0=default(block), 1=block blink, 2=block steady,
+                //           3=underline blink, 4=underline steady, 5=bar blink, 6=bar steady
+                use crate::terminal::cursor::CursorStyle;
+
+                let new_style = match style {
+                    0 | 1 | 2 => CursorStyle::Block,
+                    3 | 4 => CursorStyle::Underline,
+                    5 | 6 => CursorStyle::Bar,
+                    _ => CursorStyle::Block, // Unknown values default to block
+                };
+
+                self.state.cursor.style = new_style;
+
+                // Odd parameters enable blinking, even disable it
+                // Note: Blink state is controlled by cursor_blink field
+                if style > 0 {
+                    self.state.cursor_blink = style % 2 == 1;
+                }
             }
 
             CsiCommand::VerticalPositionAbsolute { row } => {
@@ -1160,6 +1222,63 @@ mod tests {
         assert_eq!(viewport[1][1].ch, ' '); // Erased, not shifted
         assert_eq!(viewport[1][2].ch, 'C'); // Stayed in place
         assert_eq!(viewport[1][3].ch, 'D'); // Stayed in place
+    }
+
+    #[test]
+    fn test_erase_in_display_to_end() {
+        let mut terminal = Terminal::new(80, 24);
+
+        // Fill multiple lines with content
+        terminal.process_bytes(b"Line 1\r\nLine 2\r\nLine 3\r\nLine 4");
+
+        // Position cursor at column 3, row 1 (middle of "Line 2")
+        terminal.state_mut().cursor.row = terminal.state().grid.viewport_start + 1;
+        terminal.state_mut().cursor.col = 3;
+
+        // ESC[J or ESC[0J - Erase from cursor to end of display
+        terminal.process_bytes(b"\x1b[J");
+
+        let viewport = terminal.state().grid.get_viewport();
+
+        // Line 0 should be untouched
+        assert_eq!(viewport[0][0].ch, 'L');
+        assert_eq!(viewport[0][5].ch, '1');
+
+        // Line 1 should be cleared from cursor position to end
+        assert_eq!(viewport[1][0].ch, 'L'); // Before cursor
+        assert_eq!(viewport[1][1].ch, 'i'); // Before cursor
+        assert_eq!(viewport[1][2].ch, 'n'); // Before cursor
+        assert_eq!(viewport[1][3].ch, ' '); // At cursor - cleared
+        assert_eq!(viewport[1][4].ch, ' '); // After cursor - cleared
+        assert_eq!(viewport[1][5].ch, ' '); // After cursor - cleared
+
+        // Lines 2 and 3 should be completely cleared
+        assert_eq!(viewport[2][0].ch, ' ');
+        assert_eq!(viewport[2][5].ch, ' ');
+        assert_eq!(viewport[3][0].ch, ' ');
+        assert_eq!(viewport[3][5].ch, ' ');
+    }
+
+    #[test]
+    fn test_erase_in_display_all() {
+        let mut terminal = Terminal::new(80, 24);
+
+        // Fill with content
+        terminal.process_bytes(b"Line 1\r\nLine 2\r\nLine 3");
+
+        // ESC[2J - Erase entire display
+        terminal.process_bytes(b"\x1b[2J");
+
+        let viewport = terminal.state().grid.get_viewport();
+
+        // All lines should be cleared
+        assert_eq!(viewport[0][0].ch, ' ');
+        assert_eq!(viewport[1][0].ch, ' ');
+        assert_eq!(viewport[2][0].ch, ' ');
+
+        // Cursor should be at home position
+        assert_eq!(terminal.state().cursor.row, 0);
+        assert_eq!(terminal.state().cursor.col, 0);
     }
 
     #[test]

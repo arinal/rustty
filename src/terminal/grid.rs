@@ -1,7 +1,7 @@
 use super::color::Color;
 
 /// Terminal cell with character, colors, and text attributes
-/// Note: bold/italic/underline are stored but not yet rendered
+/// Note: bold is rendered (brightens color), italic is rendered (cyan tint), underline is rendered (line below text)
 #[derive(Clone, Copy)]
 pub struct Cell {
     pub ch: char,
@@ -72,6 +72,9 @@ pub struct TerminalGrid {
     alternate_cells: Vec<Vec<Cell>>,
     alternate_viewport_start: usize,
     pub use_alternate_screen: bool,
+    // Scrolling region support (DECSTBM)
+    pub scroll_top: usize,    // Top margin (0-indexed, inclusive)
+    pub scroll_bottom: usize, // Bottom margin (0-indexed, inclusive)
 }
 
 impl TerminalGrid {
@@ -85,6 +88,8 @@ impl TerminalGrid {
             alternate_cells: vec![vec![Cell::default(); width]; viewport_height],
             alternate_viewport_start: 0,
             use_alternate_screen: false,
+            scroll_top: 0,
+            scroll_bottom: viewport_height.saturating_sub(1),
         }
     }
 
@@ -180,6 +185,83 @@ impl TerminalGrid {
 
         // Adjust viewport to stay in bounds
         self.viewport_to_end();
+
+        // Reset scrolling region to full screen on resize
+        self.scroll_top = 0;
+        self.scroll_bottom = self.viewport_height.saturating_sub(1);
+    }
+
+    /// Set scrolling region margins (DECSTBM)
+    pub fn set_scroll_region(&mut self, top: usize, bottom: usize) {
+        // Validate margins (0-indexed, inclusive)
+        if top < bottom && bottom < self.viewport_height {
+            self.scroll_top = top;
+            self.scroll_bottom = bottom;
+        }
+        // If invalid, ignore the command (keep current margins)
+    }
+
+    /// Reset scrolling region to full screen
+    pub fn reset_scroll_region(&mut self) {
+        self.scroll_top = 0;
+        self.scroll_bottom = self.viewport_height.saturating_sub(1);
+    }
+
+    /// Insert n blank lines at the given row within scrolling region
+    /// Lines below are pushed down, lines pushed past bottom margin are deleted
+    pub fn insert_lines(&mut self, row: usize, count: usize) {
+        // Only operate within scrolling region
+        if row < self.scroll_top || row > self.scroll_bottom {
+            return;
+        }
+
+        let count = count.min(self.scroll_bottom - row + 1);
+
+        // Calculate absolute row index
+        let abs_row = self.viewport_start + row;
+
+        // Delete lines at the bottom of the scrolling region
+        for _ in 0..count {
+            if abs_row + self.scroll_bottom - row < self.cells.len() {
+                self.cells.remove(abs_row + self.scroll_bottom - row);
+            }
+        }
+
+        // Insert blank lines at cursor position
+        for _ in 0..count {
+            self.cells
+                .insert(abs_row, vec![Cell::default(); self.width]);
+        }
+    }
+
+    /// Delete n lines at the given row within scrolling region
+    /// Lines below are pulled up, blank lines are added at bottom margin
+    pub fn delete_lines(&mut self, row: usize, count: usize) {
+        // Only operate within scrolling region
+        if row < self.scroll_top || row > self.scroll_bottom {
+            return;
+        }
+
+        let count = count.min(self.scroll_bottom - row + 1);
+
+        // Calculate absolute row index
+        let abs_row = self.viewport_start + row;
+
+        // Delete lines at cursor position
+        for _ in 0..count {
+            if abs_row < self.cells.len() && abs_row + self.scroll_bottom - row < self.cells.len() {
+                self.cells.remove(abs_row);
+            }
+        }
+
+        // Insert blank lines at bottom of scrolling region
+        for _ in 0..count {
+            let insert_pos = abs_row + self.scroll_bottom - row;
+            if insert_pos <= self.cells.len() {
+                self.cells
+                    .insert(insert_pos, vec![Cell::default(); self.width]);
+            }
+        }
     }
 }
 

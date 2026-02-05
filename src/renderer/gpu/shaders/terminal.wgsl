@@ -35,11 +35,13 @@ var s_diffuse: sampler;
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let alpha = textureSample(t_diffuse, s_diffuse, in.tex_coords).r;
 
-    // If bg_color has alpha=0, this is a background-only quad - render solid bg
+    // If bg_color has alpha=0, this is a background-only quad (solid color blocks)
     if (in.bg_color.a < 0.5) {
         return vec4<f32>(in.bg_color.rgb, 1.0);
     }
 
-    // Otherwise, render glyph with actual alpha for proper framebuffer blending
-    return vec4<f32>(in.fg_color.rgb, alpha);
+    // Composite foreground glyph over background color
+    // mix(a, b, t) = a * (1-t) + b * t
+    let color = mix(in.bg_color.rgb, in.fg_color.rgb, alpha);
+    return vec4<f32>(color, 1.0);
 }

@@ -22,56 +22,68 @@ A modern terminal emulator written in Rust with both CPU and GPU rendering optio
 
 ### Core Components
 
-```
-┌────────────────────────────────────────────────┐
-│                   Main Thread                  │
-│  ┌────────────┐  ┌──────────┐  ┌─────────────┐ │
-│  │   Window   │  │   Grid   │  │   Parser    │ │
-│  │  (winit)   │  │ (80x24+) │  │   (VTE)     │ │
-│  └────────────┘  └──────────┘  └─────────────┘ │
-│         │              │               │       │
-│         └──────────────┴───────────────┘       │
-│                        │                       │
-│                   ┌────▼─────┐                 │
-│                   │ Renderer │                 │
-│                   │ (Raqote) │                 │
-│                   └──────────┘                 │
-└────────────────────────────────────────────────┘
-                         │
-                    Channel (MPSC)
-                         │
-┌────────────────────────▼────────────────────────┐
-│              PTY Reader Thread                  │
-│  ┌──────────────────────────────────────────┐   │
-│  │  Blocking read on PTY master FD          │   │
-│  │  Wakes on data → Sends to main thread    │   │
-│  └──────────────────────────────────────────┘   │
-└─────────────────────────────────────────────────┘
-                         │
-┌────────────────────────▼────────────────────────┐
-│              Shell Process (Child)              │
-│  ┌──────────────────────────────────────────┐   │
-│  │  $SHELL (bash, zsh, fish, etc.)          │   │
-│  │  Connected to PTY slave                  │   │
-│  └──────────────────────────────────────────┘   │
-└─────────────────────────────────────────────────┘
+```mermaid
+flowchart TB
+    subgraph MainThread["Main Thread"]
+        subgraph AppGeneric["App&lt;R: Renderer&gt;"]
+            Window["Window<br/>(winit)"]
+            Grid["Grid<br/>(80x24+)"]
+            Parser["Parser<br/>(VTE)"]
+
+            Window --> State
+            Grid --> State
+            Parser --> State
+
+            State["Terminal State"] --> RendererTrait["Renderer Trait"]
+        end
+
+        subgraph Renderers["Renderer Implementations"]
+            CPU["CPU Renderer<br/>(Raqote)"]
+            GPU["GPU Renderer<br/>(wgpu)"]
+        end
+
+        RendererTrait -.->|compile-time| CPU
+        RendererTrait -.->|compile-time| GPU
+    end
+
+    subgraph ReaderThread["PTY Reader Thread"]
+        PTYRead["Blocking read on PTY master FD<br/>Wakes on data → Sends via channel"]
+    end
+
+    subgraph ShellProcess["Shell Process (Child)"]
+        Shell["$SHELL (bash, zsh, fish, etc.)<br/>Connected to PTY slave"]
+    end
+
+    MainThread <-->|"Channel (MPSC)"| ReaderThread
+    ReaderThread <-->|"PTY"| ShellProcess
+
+    style MainThread fill:#e1f5ff
+    style ReaderThread fill:#fff4e1
+    style ShellProcess fill:#f0f0f0
+    style AppGeneric fill:#d4edff
+    style Renderers fill:#ffe4d4
 ```
 
 ### Module Breakdown
 
 Rustty is organized as a **library + binary**:
 
-**Library** (`src/lib.rs` + `src/terminal/`):
-- **Pure terminal emulation** with zero UI dependencies (~1500 lines)
-- Exports: `Terminal`, `Shell`, `TerminalGrid`, `Cell`, `Color`, etc.
+**Library** (`src/lib.rs` + `src/terminal/` + `src/renderer/`):
+- **Terminal emulation** with zero UI dependencies (`src/terminal/`, ~1500 lines)
+- **Renderer abstractions** (`src/renderer/`, ~1200 lines)
+  - Generic `App<R: Renderer>` for shared application logic
+  - `Renderer` trait with CPU and GPU implementations
+  - Input handling (keyboard, mouse, paste, focus)
+- Exports: `Terminal`, `Shell`, `TerminalGrid`, `Cell`, `Color`, `CpuRenderer`, `GpuRenderer`, etc.
 - Can be used to build custom terminal UIs
 
-**Binaries**:
-- **CPU Binary** (`src/bin/rustty.rs`) - Default, uses Raqote + Softbuffer
-- **GPU Binary** (`src/bin/rustty_gpu.rs`) - Hardware-accelerated, uses wgpu
-- Both import terminal types from library and handle window management
+**Binary** (`src/bin/main.rs` with conditional compilation):
+- **Single unified binary** - Selects renderer at compile time via feature flags
+- **CPU implementation** (`src/bin/main/cpu_impl.rs`) - Uses Raqote + Softbuffer
+- **GPU implementation** (`src/bin/main/gpu_impl.rs`) - Uses wgpu
+- Both implementations use shared `App<R>` from library, minimal duplication
 
-**Terminal modules**:
+**Terminal modules** (`src/terminal/`):
 - **`mod.rs`** - Terminal struct with VTE Perform implementation
 - **`shell.rs`** - Shell process management + PTY + reader thread
 - **`grid.rs`** - Terminal grid data structure with scrollback buffer
@@ -79,6 +91,15 @@ Rustty is organized as a **library + binary**:
 - **`color.rs`** - Color representation and ANSI color palette
 - **`cursor.rs`** - Cursor positioning
 - **`state.rs`** - Terminal state (pure data structure)
+
+**Renderer modules** (`src/renderer/`):
+- **`mod.rs`** - `Renderer` trait, `App<R>` generic application struct, input handlers
+- **`cpu.rs`** - CPU renderer implementation (Raqote)
+- **`gpu/`** - GPU renderer module
+  - **`mod.rs`** - Main GpuRenderer implementation
+  - **`vertex.rs`** - Vertex structure and layout
+  - **`glyph_atlas.rs`** - Texture atlas for font rendering
+  - **`shaders/terminal.wgsl`** - WGSL shader code
 
 ## Building
 
@@ -92,15 +113,15 @@ Rustty is organized as a **library + binary**:
 
 ### Rendering Backends
 
-Rustty offers two rendering backends via Cargo feature flags:
+Rustty offers two rendering backends via Cargo feature flags, compiled into a single binary:
 
-**CPU Renderer (`rustty`)** - Default
+**CPU Renderer** - Default
 - Uses Raqote for software rendering
 - Better compatibility (works on all systems)
 - Lower memory usage
 - Good for general use
 
-**GPU Renderer (`rustty-gpu`)**
+**GPU Renderer**
 - Uses wgpu for hardware-accelerated rendering
 - Better performance on large windows
 - Foundation for future smooth scrolling
@@ -110,35 +131,40 @@ Rustty offers two rendering backends via Cargo feature flags:
 
 **CPU Renderer (Default):**
 ```bash
-# Build CPU binary
-cargo build --bin rustty
+# Build with CPU renderer (or just use default)
+cargo build
+cargo build --features ui-cpu --no-default-features
 
-# Run CPU binary
-cargo run --bin rustty
+# Run CPU renderer
+cargo run
+cargo run --features ui-cpu --no-default-features
 
 # Release build
-cargo build --bin rustty --release
+cargo build --release
 ```
 
 **GPU Renderer:**
 ```bash
-# Build GPU binary
-cargo build --bin rustty-gpu --features ui-gpu
+# Build with GPU renderer
+cargo build --features ui-gpu --no-default-features
 
-# Run GPU binary
-cargo run --bin rustty-gpu --features ui-gpu
+# Run GPU renderer
+cargo run --features ui-gpu --no-default-features
 
 # Release build
-cargo build --bin rustty-gpu --features ui-gpu --release
+cargo build --features ui-gpu --no-default-features --release
 ```
 
-**Both Binaries:**
+**Testing:**
 ```bash
-# Build both
-cargo build --all-features
-
-# Run tests
+# Run tests (library tests, no UI)
 cargo test
+
+# Build library only (no binary, no UI dependencies)
+cargo build --lib
+
+# Build with all features
+cargo build --all-features
 ```
 
 ## Usage
@@ -256,7 +282,9 @@ $ cargo test
 - ✅ Alternate screen buffer (`ESC[?1049h/l`)
 
 **Not Yet Implemented:**
-- ❌ Text attribute rendering (bold, italic, underline are stored but not visually rendered)
+- ✅ Bold text rendering (brightens foreground color)
+- ✅ Italic text rendering (adds cyan tint)
+- ✅ Underline rendering (draws line below text)
 - ❌ Mouse support
 
 ### Rendering Pipeline
@@ -293,10 +321,19 @@ Test the 256-color palette support:
 
 ### Short-term
 - [x] Full 256-color palette support ✨
-- [x] Alternate screen buffer ✨ **NEW!**
-- [ ] Text attributes (bold, italic, underline, etc.)
-- [ ] Cursor blinking animation
-- [ ] Selection and clipboard support
+- [x] Alternate screen buffer ✨
+- [x] Bold text rendering ✨
+- [x] Italic text rendering ✨
+- [x] Underline rendering ✨
+- [x] Cursor blinking animation ✨
+- [x] Cursor styles (block, underline, bar) ✨
+- [x] Scrolling regions (DECSTBM) ✨
+- [x] Insert/Delete Line operations ✨
+- [x] Mouse support (modes 1000, 1002, 1006) ✨ **NEW!**
+- [x] Bracketed paste mode ✨ **NEW!**
+- [x] Focus events ✨ **NEW!**
+- [x] Application cursor keys ✨ **NEW!**
+- [ ] Selection support
 
 ### Long-term
 - [x] GPU rendering with wgpu ✨ **NEW!**

@@ -54,6 +54,15 @@ pub struct TerminalState {
 
     /// Mouse SGR tracking mode - enables SGR mouse protocol
     pub mouse_sgr: bool,
+
+    /// Focus events mode - sends focus in/out sequences
+    pub focus_events: bool,
+
+    /// Mouse tracking mode - enables button event reporting (mode 1000)
+    pub mouse_tracking: bool,
+
+    /// Mouse cell motion mode - enables button + drag reporting (mode 1002)
+    pub mouse_cell_motion: bool,
 }
 
 impl TerminalState {
@@ -74,6 +83,9 @@ impl TerminalState {
             show_cursor: true,   // Cursor visible by default
             cursor_blink: false, // No blinking by default
             mouse_sgr: false,
+            focus_events: false,
+            mouse_tracking: false,
+            mouse_cell_motion: false,
         }
     }
 }
