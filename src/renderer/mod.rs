@@ -4,17 +4,11 @@
 //! used to display terminal content. All renderers implement the `Renderer` trait
 //! for uniform behavior.
 
-pub mod app;
-pub mod input;
-
 #[cfg(feature = "ui-cpu")]
 pub mod cpu;
 
 #[cfg(feature = "ui-gpu")]
 pub mod gpu;
-
-// Re-export common types
-pub use app::{App, AppBase};
 
 // Re-export renderers for convenience
 #[cfg(feature = "ui-cpu")]

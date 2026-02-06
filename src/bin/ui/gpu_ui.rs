@@ -6,7 +6,7 @@ use winit::event::{ElementState, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow};
 use winit::window::{Window, WindowId};
 
-pub(crate) type AppInner = rustty::renderer::App<GpuRenderer>;
+pub(crate) type AppInner = rustty::App<GpuRenderer>;
 
 // Newtype wrapper to implement ApplicationHandler
 pub(crate) struct App(pub AppInner);
@@ -145,7 +145,7 @@ impl ApplicationHandler for App {
                 }
             }
             WindowEvent::Focused(focused) => {
-                rustty::renderer::input::handle_focus_event(&mut self.0.base.session, focused);
+                self.0.handle_focus_event(focused);
             }
             WindowEvent::MouseInput { state, button, .. } => {
                 let button_code = match button {
@@ -157,26 +157,12 @@ impl ApplicationHandler for App {
 
                 let pressed = state == ElementState::Pressed;
 
-                rustty::renderer::input::handle_mouse_button(
-                    &mut self.0.base.session,
-                    button_code,
-                    pressed,
-                    &mut self.0.base.mouse_buttons_pressed,
-                    self.0.base.last_mouse_position,
-                );
+                self.0.handle_mouse_button(button_code, pressed);
             }
             WindowEvent::CursorMoved { position, .. } => {
                 if let Some((col, row)) = self.0.window_to_grid_coords(position.x, position.y) {
-                    let prev_pos = self.0.base.last_mouse_position;
                     self.0.base.last_mouse_position = Some((col, row));
-
-                    rustty::renderer::input::handle_cursor_moved(
-                        &mut self.0.base.session,
-                        col,
-                        row,
-                        prev_pos,
-                        self.0.base.mouse_buttons_pressed,
-                    );
+                    self.0.handle_cursor_moved(col, row);
                 }
             }
             _ => {}
