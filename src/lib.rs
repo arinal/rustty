@@ -86,7 +86,7 @@ impl TerminalSession {
     /// Should be called regularly (e.g., in the event loop) to keep the
     /// terminal display synchronized with shell output.
     pub fn process_output(&mut self) -> bool {
-        if let Some(ref shell) = self.shell {
+        if let Some(ref mut shell) = self.shell {
             let mut has_data = false;
 
             // Drain all available messages from the channel
@@ -111,6 +111,14 @@ impl TerminalSession {
 
             if has_data {
                 self.terminal.state_mut().grid.viewport_to_end();
+            }
+
+            // Send any pending responses back to the shell
+            let responses = self.terminal.drain_responses();
+            for response in responses {
+                if let Err(e) = shell.write(&response) {
+                    eprintln!("Failed to send response to shell: {}", e);
+                }
             }
         }
         true

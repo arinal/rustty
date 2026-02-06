@@ -63,6 +63,15 @@ pub struct TerminalState {
 
     /// Mouse cell motion mode - enables button + drag reporting (mode 1002)
     pub mouse_cell_motion: bool,
+
+    /// Mouse all motion mode - enables all mouse motion reporting (mode 1003)
+    pub mouse_all_motion: bool,
+
+    /// Mouse urxvt mode - urxvt-style mouse reporting (mode 1015)
+    pub mouse_urxvt: bool,
+
+    /// Synchronized output mode - batches output updates (mode 2026)
+    pub synchronized_output: bool,
 }
 
 impl TerminalState {
@@ -86,6 +95,9 @@ impl TerminalState {
             focus_events: false,
             mouse_tracking: false,
             mouse_cell_motion: false,
+            mouse_all_motion: false,
+            mouse_urxvt: false,
+            synchronized_output: false,
         }
     }
 }

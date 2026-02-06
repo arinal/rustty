@@ -33,6 +33,8 @@ pub struct Terminal {
     state: TerminalState,
     /// VTE parser state machine
     parser: Parser,
+    /// Pending responses to be sent back to the shell
+    pending_responses: Vec<Vec<u8>>,
 }
 
 impl Terminal {
@@ -41,7 +43,16 @@ impl Terminal {
         Self {
             state: TerminalState::new(cols, rows),
             parser: Parser::new(),
+            pending_responses: Vec::new(),
         }
+    }
+
+    /// Drain pending responses that need to be sent to the shell
+    ///
+    /// Returns a vector of byte sequences to be written to the shell.
+    /// The internal buffer is cleared after this call.
+    pub fn drain_responses(&mut self) -> Vec<Vec<u8>> {
+        std::mem::take(&mut self.pending_responses)
     }
 
     /// Process input bytes through the VTE parser
@@ -140,6 +151,66 @@ impl Terminal {
         }
     }
 
+    /// Generate DECRQM (DEC Request Mode) response
+    ///
+    /// Format: ESC[?{mode};{value}$y
+    /// where value is:
+    ///   0 = not recognized
+    ///   1 = set
+    ///   2 = reset
+    ///   3 = permanently set
+    ///   4 = permanently reset
+    fn generate_decrqm_response(&mut self, mode_num: u16) {
+        let mode = DecPrivateMode::from_mode(mode_num);
+
+        let value = match mode {
+            DecPrivateMode::AlternateScreenBuffer => {
+                if self.state.grid.use_alternate_screen { 1 } else { 2 }
+            }
+            DecPrivateMode::AutoWrapMode => {
+                if self.state.auto_wrap { 1 } else { 2 }
+            }
+            DecPrivateMode::BracketedPaste => {
+                if self.state.bracketed_paste { 1 } else { 2 }
+            }
+            DecPrivateMode::ApplicationCursorKeys => {
+                if self.state.application_cursor_keys { 1 } else { 2 }
+            }
+            DecPrivateMode::ShowCursor => {
+                if self.state.show_cursor { 1 } else { 2 }
+            }
+            DecPrivateMode::CursorBlink => {
+                if self.state.cursor_blink { 1 } else { 2 }
+            }
+            DecPrivateMode::MouseSGR => {
+                if self.state.mouse_sgr { 1 } else { 2 }
+            }
+            DecPrivateMode::FocusEvents => {
+                if self.state.focus_events { 1 } else { 2 }
+            }
+            DecPrivateMode::MouseTracking => {
+                if self.state.mouse_tracking { 1 } else { 2 }
+            }
+            DecPrivateMode::MouseCellMotion => {
+                if self.state.mouse_cell_motion { 1 } else { 2 }
+            }
+            DecPrivateMode::MouseAllMotion => {
+                if self.state.mouse_all_motion { 1 } else { 2 }
+            }
+            DecPrivateMode::MouseUrxvt => {
+                if self.state.mouse_urxvt { 1 } else { 2 }
+            }
+            DecPrivateMode::SynchronizedOutput => {
+                if self.state.synchronized_output { 1 } else { 2 }
+            }
+            _ => 0, // Not recognized/implemented
+        };
+
+        // Format: ESC[?{mode};{value}$y
+        let response = format!("\x1b[?{};{}$y", mode_num, value);
+        self.pending_responses.push(response.into_bytes());
+    }
+
     /// Handle DEC private mode set (ESC[?{mode}h)
     fn handle_dec_mode_set(&mut self, params: &Params) {
         let mode_num = self.param_or(params, 0, 0);
@@ -189,6 +260,18 @@ impl Terminal {
             DecPrivateMode::MouseCellMotion => {
                 // Enable mouse button + drag reporting
                 self.state.mouse_cell_motion = true;
+            }
+            DecPrivateMode::MouseAllMotion => {
+                // Enable mouse all motion reporting
+                self.state.mouse_all_motion = true;
+            }
+            DecPrivateMode::MouseUrxvt => {
+                // Enable urxvt-style mouse reporting
+                self.state.mouse_urxvt = true;
+            }
+            DecPrivateMode::SynchronizedOutput => {
+                // Enable synchronized output mode
+                self.state.synchronized_output = true;
             }
             DecPrivateMode::Unknown(mode) => {
                 eprintln!("[ANSI] Unknown DEC private mode (set): {}", mode);
@@ -247,6 +330,18 @@ impl Terminal {
             DecPrivateMode::MouseCellMotion => {
                 // Disable mouse button + drag reporting
                 self.state.mouse_cell_motion = false;
+            }
+            DecPrivateMode::MouseAllMotion => {
+                // Disable mouse all motion reporting
+                self.state.mouse_all_motion = false;
+            }
+            DecPrivateMode::MouseUrxvt => {
+                // Disable urxvt-style mouse reporting
+                self.state.mouse_urxvt = false;
+            }
+            DecPrivateMode::SynchronizedOutput => {
+                // Disable synchronized output mode
+                self.state.synchronized_output = false;
             }
             DecPrivateMode::Unknown(mode) => {
                 eprintln!("[ANSI] Unknown DEC private mode (reset): {}", mode);
@@ -344,6 +439,10 @@ impl Terminal {
                 SgrParameter::NotReversed => {
                     self.state.reverse = false;
                 }
+                SgrParameter::DefaultUnderlineColor => {
+                    // Default underline color - no-op (not yet implemented)
+                    // We don't support separate underline colors yet
+                }
                 SgrParameter::Unknown(code) => {
                     eprintln!("[ANSI] Unknown SGR parameter: {}", code);
                 }
@@ -436,12 +535,34 @@ impl Perform for Terminal {
     fn csi_dispatch(&mut self, params: &Params, intermediates: &[u8], _ignore: bool, action: char) {
         // Check if this is a DEC private mode sequence (starts with '?')
         let is_dec_private = intermediates.first() == Some(&b'?');
+        let has_gt = intermediates.first() == Some(&b'>');
+
+        // Handle secondary DA (ESC[>c) specially
+        if has_gt && action == 'c' {
+            // Secondary DA - report terminal type and version
+            // Format: ESC[>Pp;Pv;Pcc
+            // Pp = terminal type (0 = VT100, 1 = VT220, etc.)
+            // Pv = firmware version
+            // Pc = ROM cartridge registration number
+            // Report as VT220-compatible terminal
+            let response = b"\x1b[>1;0;0c".to_vec();
+            self.pending_responses.push(response);
+            return;
+        }
 
         if is_dec_private {
             // Handle DEC private modes
             match action {
                 'h' => self.handle_dec_mode_set(params),
                 'l' => self.handle_dec_mode_reset(params),
+                'p' => {
+                    // DECRQM (Request Mode) - query mode status
+                    let mode_num = self.param_or(params, 0, 0);
+                    self.generate_decrqm_response(mode_num);
+                }
+                'u' => {
+                    // Unknown DEC private action 'u' - recognized, no-op
+                }
                 _ => {
                     eprintln!("[ANSI] Unknown DEC private mode action: {}", action);
                 }
@@ -597,14 +718,32 @@ impl Perform for Terminal {
             CsiCommand::SelectGraphicRendition => {}
 
             // Device queries and window manipulation
-            CsiCommand::DeviceStatusReport { .. } => {
-                // Would need to send response to PTY
-                // Not implementable at this level
+            CsiCommand::DeviceStatusReport { n } => {
+                // DSR - Device Status Report
+                match n {
+                    6 => {
+                        // CPR - Cursor Position Report
+                        // Report cursor position as ESC[{row};{col}R
+                        let row = self.state.cursor.row + 1; // 1-based
+                        let col = self.state.cursor.col + 1; // 1-based
+                        let response = format!("\x1b[{};{}R", row, col);
+                        self.pending_responses.push(response.into_bytes());
+                    }
+                    _ => {
+                        // Other DSR queries not implemented
+                    }
+                }
             }
 
-            CsiCommand::DeviceAttributes { .. } => {
-                // Would need to send response to PTY
-                // Not implementable at this level
+            CsiCommand::DeviceAttributes { n } => {
+                // DA - Device Attributes
+                if n == 0 {
+                    // Primary DA - identify as VT100
+                    // ESC[?1;2c = VT100 with Advanced Video Option
+                    let response = b"\x1b[?1;2c".to_vec();
+                    self.pending_responses.push(response);
+                }
+                // Secondary DA and others not implemented
             }
 
             CsiCommand::WindowManipulation { .. } => {

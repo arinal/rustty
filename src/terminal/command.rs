@@ -361,6 +361,10 @@ pub enum DecPrivateMode {
     /// Mode 1007
     AlternateScroll,
 
+    /// Enable urxvt Mouse Mode
+    /// Mode 1015
+    MouseUrxvt,
+
     /// Alternate Screen Buffer
     /// Mode 1049 (save cursor + switch to alternate screen)
     /// Mode 47 (just switch, no cursor save)
@@ -402,7 +406,7 @@ impl DecPrivateMode {
             1005 => Self::MouseUTF8,
             1006 => Self::MouseSGR,
             1007 => Self::AlternateScroll,
-            1015 => Self::Unknown(mode), // urxvt mouse mode - not commonly used
+            1015 => Self::MouseUrxvt,
             1049 => Self::AlternateScreenBuffer,
             2004 => Self::BracketedPaste,
             2026 => Self::SynchronizedOutput,
