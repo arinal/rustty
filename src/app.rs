@@ -284,11 +284,7 @@ impl<R: Renderer> App<R> {
     }
 
     /// Handle mouse button press/release events
-    pub fn handle_mouse_button(
-        &mut self,
-        button_code: u8,
-        pressed: bool,
-    ) -> bool {
+    pub fn handle_mouse_button(&mut self, button_code: u8, pressed: bool) -> bool {
         if pressed {
             self.base.mouse_buttons_pressed |= 1 << button_code;
         } else {
@@ -298,7 +294,8 @@ impl<R: Renderer> App<R> {
         if let Some((col, row)) = self.base.last_mouse_position {
             let term_state = self.base.session.state();
             if term_state.mouse_tracking || term_state.mouse_cell_motion || term_state.mouse_sgr {
-                let sequence = Self::generate_mouse_sequence(term_state, button_code, col, row, pressed);
+                let sequence =
+                    Self::generate_mouse_sequence(term_state, button_code, col, row, pressed);
                 if !sequence.is_empty() {
                     if let Err(e) = self.base.session.write_input(&sequence) {
                         eprintln!("Failed to write mouse event: {}", e);
@@ -320,7 +317,8 @@ impl<R: Renderer> App<R> {
         if term_state.mouse_cell_motion || term_state.mouse_sgr {
             if mouse_buttons_pressed != 0 && prev_position != Some((col, row)) {
                 let button_code = mouse_buttons_pressed.trailing_zeros() as u8;
-                let sequence = Self::generate_mouse_sequence(term_state, button_code, col, row, true);
+                let sequence =
+                    Self::generate_mouse_sequence(term_state, button_code, col, row, true);
                 if !sequence.is_empty() {
                     if let Err(e) = self.base.session.write_input(&sequence) {
                         eprintln!("Failed to write mouse motion: {}", e);

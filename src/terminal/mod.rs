@@ -165,43 +165,95 @@ impl Terminal {
 
         let value = match mode {
             DecPrivateMode::AlternateScreenBuffer => {
-                if self.state.grid.use_alternate_screen { 1 } else { 2 }
+                if self.state.grid.use_alternate_screen {
+                    1
+                } else {
+                    2
+                }
             }
             DecPrivateMode::AutoWrapMode => {
-                if self.state.auto_wrap { 1 } else { 2 }
+                if self.state.auto_wrap {
+                    1
+                } else {
+                    2
+                }
             }
             DecPrivateMode::BracketedPaste => {
-                if self.state.bracketed_paste { 1 } else { 2 }
+                if self.state.bracketed_paste {
+                    1
+                } else {
+                    2
+                }
             }
             DecPrivateMode::ApplicationCursorKeys => {
-                if self.state.application_cursor_keys { 1 } else { 2 }
+                if self.state.application_cursor_keys {
+                    1
+                } else {
+                    2
+                }
             }
             DecPrivateMode::ShowCursor => {
-                if self.state.show_cursor { 1 } else { 2 }
+                if self.state.show_cursor {
+                    1
+                } else {
+                    2
+                }
             }
             DecPrivateMode::CursorBlink => {
-                if self.state.cursor_blink { 1 } else { 2 }
+                if self.state.cursor_blink {
+                    1
+                } else {
+                    2
+                }
             }
             DecPrivateMode::MouseSGR => {
-                if self.state.mouse_sgr { 1 } else { 2 }
+                if self.state.mouse_sgr {
+                    1
+                } else {
+                    2
+                }
             }
             DecPrivateMode::FocusEvents => {
-                if self.state.focus_events { 1 } else { 2 }
+                if self.state.focus_events {
+                    1
+                } else {
+                    2
+                }
             }
             DecPrivateMode::MouseTracking => {
-                if self.state.mouse_tracking { 1 } else { 2 }
+                if self.state.mouse_tracking {
+                    1
+                } else {
+                    2
+                }
             }
             DecPrivateMode::MouseCellMotion => {
-                if self.state.mouse_cell_motion { 1 } else { 2 }
+                if self.state.mouse_cell_motion {
+                    1
+                } else {
+                    2
+                }
             }
             DecPrivateMode::MouseAllMotion => {
-                if self.state.mouse_all_motion { 1 } else { 2 }
+                if self.state.mouse_all_motion {
+                    1
+                } else {
+                    2
+                }
             }
             DecPrivateMode::MouseUrxvt => {
-                if self.state.mouse_urxvt { 1 } else { 2 }
+                if self.state.mouse_urxvt {
+                    1
+                } else {
+                    2
+                }
             }
             DecPrivateMode::SynchronizedOutput => {
-                if self.state.synchronized_output { 1 } else { 2 }
+                if self.state.synchronized_output {
+                    1
+                } else {
+                    2
+                }
             }
             _ => 0, // Not recognized/implemented
         };
