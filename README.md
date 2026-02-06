@@ -66,24 +66,10 @@ flowchart TB
 
 ### Module Breakdown
 
-Rustty is organized as a **library + binary**:
+Rustty is organized as a **library + binary** with three distinct layers:
 
-**Library** (`src/lib.rs` + `src/terminal/` + `src/renderer/`):
-- **Terminal emulation** with zero UI dependencies (`src/terminal/`, ~1500 lines)
-- **Renderer abstractions** (`src/renderer/`, ~1200 lines)
-  - Generic `App<R: Renderer>` for shared application logic
-  - `Renderer` trait with CPU and GPU implementations
-  - Input handling (keyboard, mouse, paste, focus)
-- Exports: `Terminal`, `Shell`, `TerminalGrid`, `Cell`, `Color`, `CpuRenderer`, `GpuRenderer`, etc.
-- Can be used to build custom terminal UIs
-
-**Binary** (`src/bin/main.rs` with conditional compilation):
-- **Single unified binary** - Selects renderer at compile time via feature flags
-- **CPU implementation** (`src/bin/ui/cpu_ui.rs`) - Uses Raqote + Softbuffer
-- **GPU implementation** (`src/bin/ui/gpu_ui.rs`) - Uses wgpu
-- Both implementations use shared `App<R>` from library, minimal duplication
-
-**Terminal modules** (`src/terminal/`):
+**Layer 1: Terminal Primitives** (`src/terminal/`, ~1500 lines)
+- Core terminal emulation with zero UI dependencies
 - **`mod.rs`** - Terminal struct with VTE Perform implementation
 - **`shell.rs`** - Shell process management + PTY + reader thread
 - **`grid.rs`** - Terminal grid data structure with scrollback buffer
@@ -92,18 +78,39 @@ Rustty is organized as a **library + binary**:
 - **`cursor.rs`** - Cursor positioning
 - **`state.rs`** - Terminal state (pure data structure)
 
-**Renderer modules** (`src/renderer/`):
-- **`mod.rs`** - `Renderer` trait definition and module declarations
-- **`app.rs`** - `App<R>` generic application struct and `AppBase`
-- **`input.rs`** - Input handlers (keyboard, mouse, clipboard, focus)
+**Layer 2: Session Facade** (`src/session.rs`, ~128 lines)
+- **`TerminalSession`** - Orchestrates Terminal + Shell without UI dependencies
+- Recommended for terminal-only applications (no UI rendering)
+- Provides unified interface: `process_output()`, `write_input()`, `resize()`, state access
+
+**Layer 3: Application Facade** (`src/app.rs`, ~390 lines)
+- **`App<R: Renderer>`** - Generic application with renderer abstraction
+- **`AppBase`** - Core application state (session, modifiers, mouse state, timers)
+- Input handling methods: `handle_keyboard_input()`, `handle_mouse_button()`, `handle_paste()`, etc.
+- Recommended for terminal emulator applications with UI
+
+**Renderer Abstraction** (`src/renderer/`, ~1200 lines)
+- **`mod.rs`** - `Renderer` trait definition (~54 lines)
 - **`cpu/`** - CPU renderer module
-  - **`mod.rs`** - Main CpuRenderer implementation (Raqote)
-  - **`drawing.rs`** - Drawing primitives and helpers
+  - **`mod.rs`** - Main CpuRenderer implementation (Raqote, ~200 lines)
+  - **`drawing.rs`** - Drawing primitives and helpers (~130 lines)
 - **`gpu/`** - GPU renderer module
-  - **`mod.rs`** - Main GpuRenderer implementation (wgpu)
-  - **`vertex.rs`** - Vertex structure and layout
-  - **`glyph_atlas.rs`** - Texture atlas for font rendering
-  - **`shaders/terminal.wgsl`** - WGSL shader code
+  - **`mod.rs`** - Main GpuRenderer implementation (wgpu, ~560 lines)
+  - **`vertex.rs`** - Vertex structure and layout (~48 lines)
+  - **`glyph_atlas.rs`** - Texture atlas for font rendering (~216 lines)
+  - **`shaders/terminal.wgsl`** - WGSL shader code (~47 lines)
+
+**Binary** (`src/bin/main.rs` with conditional compilation):
+- **Single unified binary** - Selects renderer at compile time via feature flags
+- **CPU implementation** (`src/bin/ui/cpu_ui.rs`) - Uses `App<CpuRenderer>` (~199 lines)
+- **GPU implementation** (`src/bin/ui/gpu_ui.rs`) - Uses `App<GpuRenderer>` (~172 lines)
+- Both implementations use shared `App<R>` from library, minimal duplication
+
+**Library Exports** (`src/lib.rs`):
+- **Primary facade**: `App<R>`, `AppBase` (for UI applications)
+- **Secondary facade**: `TerminalSession` (for terminal-only applications)
+- **Terminal primitives**: `Terminal`, `Shell`, `TerminalState`, `TerminalGrid`, `Cell`, `Color`, etc.
+- **Renderers**: `CpuRenderer`, `GpuRenderer`, `Renderer` trait
 
 ## Building
 
@@ -189,25 +196,70 @@ The terminal will:
 
 ### Using the Library
 
-The `rustty` library can be used to build custom terminal UIs:
+The `rustty` library provides two main facades depending on your use case:
+
+#### For Terminal-Only Applications (No UI)
+
+Use `TerminalSession` for applications that need terminal emulation without a full UI:
+
+```rust
+use rustty::TerminalSession;
+
+fn main() -> anyhow::Result<()> {
+    // Create session with shell
+    let mut session = TerminalSession::new(80, 24)?;
+
+    // Event loop
+    while session.process_output() {
+        // Get viewport for custom rendering
+        let viewport = session.state().grid.get_viewport();
+
+        // ... your custom rendering logic ...
+
+        // Handle input
+        // session.write_input(b"ls\n")?;
+    }
+
+    Ok(())
+}
+```
+
+#### For Terminal Emulator Applications (With UI)
+
+Use `App<R>` with a renderer backend for full terminal emulator applications:
+
+```rust
+use rustty::{App, renderer::CpuRenderer};
+
+fn main() {
+    let mut app: App<CpuRenderer> = App::new();
+
+    // Initialize renderer and window (in winit event loop)
+    // Handle events: keyboard, mouse, rendering
+    // app.handle_keyboard_input(&key, text);
+    // app.render()?;
+}
+```
+
+#### Using Terminal Primitives Directly
+
+For advanced use cases, you can use the low-level primitives:
 
 ```rust
 use rustty::{Terminal, Shell};
 
 fn main() -> anyhow::Result<()> {
-    // Create terminal and shell
+    // Create terminal and shell separately
     let mut terminal = Terminal::new(80, 24);
     let shell = Shell::new(80, 24)?;
 
-    // Process shell output
+    // Process shell output manually
     loop {
         match shell.receiver.try_recv() {
             Ok(data) => {
                 terminal.process_bytes(&data);
-
-                // Get terminal state for rendering
                 let viewport = terminal.state().grid.get_viewport();
-                // ... custom rendering logic
+                // ... custom logic ...
             }
             Err(_) => break,
         }
@@ -217,7 +269,7 @@ fn main() -> anyhow::Result<()> {
 }
 ```
 
-The library has zero UI dependencies - only PTY and ANSI parsing.
+The library core has zero UI dependencies - only PTY and ANSI parsing.
 
 ### Keyboard Shortcuts
 
