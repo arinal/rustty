@@ -2,16 +2,16 @@ use anyhow::{Context as _, Result};
 use winit::event_loop::EventLoop;
 
 #[cfg(not(feature = "ui-gpu"))]
-#[path = "main/cpu_impl.rs"]
-mod cpu_impl;
+#[path = "ui/cpu_ui.rs"]
+mod cpu_ui;
 #[cfg(not(feature = "ui-gpu"))]
-use cpu_impl::App;
+use cpu_ui::App;
 
 #[cfg(feature = "ui-gpu")]
-#[path = "main/gpu_impl.rs"]
-mod gpu_impl;
+#[path = "ui/gpu_ui.rs"]
+mod gpu_ui;
 #[cfg(feature = "ui-gpu")]
-use gpu_impl::App;
+use gpu_ui::App;
 
 fn main() -> Result<()> {
     let event_loop = EventLoop::new().context("Failed to create event loop")?;

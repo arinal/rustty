@@ -3,6 +3,8 @@
 //! This module provides a software-based rendering backend that works on all platforms
 //! without requiring GPU drivers.
 
+mod drawing;
+
 use anyhow::{Context as _, Result};
 use raqote::{DrawTarget, SolidSource, Source};
 use softbuffer::Surface;
@@ -72,28 +74,14 @@ impl CpuRenderer {
 
                 // Draw background
                 if cell.bg.r != 0 || cell.bg.g != 0 || cell.bg.b != 0 {
-                    let bg_rect = raqote::Path {
-                        ops: vec![
-                            raqote::PathOp::MoveTo(raqote::Point::new(x, y - 15.0)),
-                            raqote::PathOp::LineTo(raqote::Point::new(
-                                x + self.char_width,
-                                y - 15.0,
-                            )),
-                            raqote::PathOp::LineTo(raqote::Point::new(
-                                x + self.char_width,
-                                y + 5.0,
-                            )),
-                            raqote::PathOp::LineTo(raqote::Point::new(x, y + 5.0)),
-                            raqote::PathOp::Close,
-                        ],
-                        winding: raqote::Winding::NonZero,
-                    };
-                    dt.fill(
-                        &bg_rect,
-                        &Source::Solid(SolidSource::from_unpremultiplied_argb(
-                            0xff, cell.bg.r, cell.bg.g, cell.bg.b,
-                        )),
-                        &raqote::DrawOptions::new(),
+                    drawing::draw_background(
+                        &mut dt,
+                        x,
+                        y,
+                        self.char_width,
+                        cell.bg.r,
+                        cell.bg.g,
+                        cell.bg.b,
                     );
                 }
 
@@ -107,17 +95,11 @@ impl CpuRenderer {
                         let mut b = cell.fg.b;
 
                         if cell.bold {
-                            // Brighten by increasing each component (clamped to 255)
-                            let brighten = |c: u8| -> u8 { ((c as u16 * 3 / 2).min(255)) as u8 };
-                            r = brighten(r);
-                            g = brighten(g);
-                            b = brighten(b);
+                            (r, g, b) = drawing::apply_bold(r, g, b);
                         }
 
                         if cell.italic {
-                            // Add cyan tint to distinguish italic text
-                            g = ((g as u16 + 30).min(255)) as u8;
-                            b = ((b as u16 + 30).min(255)) as u8;
+                            (r, g, b) = drawing::apply_italic(r, g, b);
                         }
 
                         dt.draw_text(
@@ -131,28 +113,7 @@ impl CpuRenderer {
 
                         // Draw underline if needed
                         if cell.underline {
-                            let underline_y = y + 2.0;
-                            let underline_path = raqote::Path {
-                                ops: vec![
-                                    raqote::PathOp::MoveTo(raqote::Point::new(x, underline_y)),
-                                    raqote::PathOp::LineTo(raqote::Point::new(
-                                        x + self.char_width,
-                                        underline_y,
-                                    )),
-                                ],
-                                winding: raqote::Winding::NonZero,
-                            };
-                            dt.stroke(
-                                &underline_path,
-                                &Source::Solid(SolidSource::from_unpremultiplied_argb(
-                                    0xff, r, g, b,
-                                )),
-                                &raqote::StrokeStyle {
-                                    width: 1.0,
-                                    ..Default::default()
-                                },
-                                &raqote::DrawOptions::new(),
-                            );
+                            drawing::draw_underline(&mut dt, x, y, self.char_width, r, g, b);
                         }
                     }
                 }
@@ -171,67 +132,13 @@ impl CpuRenderer {
 
             match cursor_style {
                 CursorStyle::Block => {
-                    let cursor_rect = raqote::Path {
-                        ops: vec![
-                            raqote::PathOp::MoveTo(raqote::Point::new(cursor_x, cursor_y - 15.0)),
-                            raqote::PathOp::LineTo(raqote::Point::new(
-                                cursor_x + self.char_width,
-                                cursor_y - 15.0,
-                            )),
-                            raqote::PathOp::LineTo(raqote::Point::new(
-                                cursor_x + self.char_width,
-                                cursor_y + 5.0,
-                            )),
-                            raqote::PathOp::LineTo(raqote::Point::new(cursor_x, cursor_y + 5.0)),
-                            raqote::PathOp::Close,
-                        ],
-                        winding: raqote::Winding::NonZero,
-                    };
-                    dt.fill(
-                        &cursor_rect,
-                        &Source::Solid(SolidSource::from_unpremultiplied_argb(0xff, 255, 255, 255)),
-                        &raqote::DrawOptions::new(),
-                    );
+                    drawing::draw_block_cursor(&mut dt, cursor_x, cursor_y, self.char_width);
                 }
                 CursorStyle::Underline => {
-                    let underline_y = cursor_y + 3.0;
-                    let underline_path = raqote::Path {
-                        ops: vec![
-                            raqote::PathOp::MoveTo(raqote::Point::new(cursor_x, underline_y)),
-                            raqote::PathOp::LineTo(raqote::Point::new(
-                                cursor_x + self.char_width,
-                                underline_y,
-                            )),
-                        ],
-                        winding: raqote::Winding::NonZero,
-                    };
-                    dt.stroke(
-                        &underline_path,
-                        &Source::Solid(SolidSource::from_unpremultiplied_argb(0xff, 255, 255, 255)),
-                        &raqote::StrokeStyle {
-                            width: 2.0,
-                            ..Default::default()
-                        },
-                        &raqote::DrawOptions::new(),
-                    );
+                    drawing::draw_underline_cursor(&mut dt, cursor_x, cursor_y, self.char_width);
                 }
                 CursorStyle::Bar => {
-                    let bar_path = raqote::Path {
-                        ops: vec![
-                            raqote::PathOp::MoveTo(raqote::Point::new(cursor_x, cursor_y - 15.0)),
-                            raqote::PathOp::LineTo(raqote::Point::new(cursor_x, cursor_y + 5.0)),
-                        ],
-                        winding: raqote::Winding::NonZero,
-                    };
-                    dt.stroke(
-                        &bar_path,
-                        &Source::Solid(SolidSource::from_unpremultiplied_argb(0xff, 255, 255, 255)),
-                        &raqote::StrokeStyle {
-                            width: 2.0,
-                            ..Default::default()
-                        },
-                        &raqote::DrawOptions::new(),
-                    );
+                    drawing::draw_bar_cursor(&mut dt, cursor_x, cursor_y);
                 }
             }
         }

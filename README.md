@@ -79,8 +79,8 @@ Rustty is organized as a **library + binary**:
 
 **Binary** (`src/bin/main.rs` with conditional compilation):
 - **Single unified binary** - Selects renderer at compile time via feature flags
-- **CPU implementation** (`src/bin/main/cpu_impl.rs`) - Uses Raqote + Softbuffer
-- **GPU implementation** (`src/bin/main/gpu_impl.rs`) - Uses wgpu
+- **CPU implementation** (`src/bin/ui/cpu_ui.rs`) - Uses Raqote + Softbuffer
+- **GPU implementation** (`src/bin/ui/gpu_ui.rs`) - Uses wgpu
 - Both implementations use shared `App<R>` from library, minimal duplication
 
 **Terminal modules** (`src/terminal/`):
@@ -93,10 +93,14 @@ Rustty is organized as a **library + binary**:
 - **`state.rs`** - Terminal state (pure data structure)
 
 **Renderer modules** (`src/renderer/`):
-- **`mod.rs`** - `Renderer` trait, `App<R>` generic application struct, input handlers
-- **`cpu.rs`** - CPU renderer implementation (Raqote)
+- **`mod.rs`** - `Renderer` trait definition and module declarations
+- **`app.rs`** - `App<R>` generic application struct and `AppBase`
+- **`input.rs`** - Input handlers (keyboard, mouse, clipboard, focus)
+- **`cpu/`** - CPU renderer module
+  - **`mod.rs`** - Main CpuRenderer implementation (Raqote)
+  - **`drawing.rs`** - Drawing primitives and helpers
 - **`gpu/`** - GPU renderer module
-  - **`mod.rs`** - Main GpuRenderer implementation
+  - **`mod.rs`** - Main GpuRenderer implementation (wgpu)
   - **`vertex.rs`** - Vertex structure and layout
   - **`glyph_atlas.rs`** - Texture atlas for font rendering
   - **`shaders/terminal.wgsl`** - WGSL shader code
@@ -305,6 +309,7 @@ PTY Output → VTE Parser → Terminal Grid → Raqote → Softbuffer → Window
 For detailed information, see the following documentation:
 
 - **[Terminal Fundamentals](docs/terminal-fundamentals.md)** - Complete guide to how terminal emulators work (PTY, shells, file descriptors, Rustty architecture)
+- **[Window System](docs/window-system.md)** - Window management, sizing, rendering pipelines, and keyboard input handling
 - **[ANSI Implementation](docs/ansi-implementation.md)** - Complete reference of supported ANSI escape sequences
 - **[Debugging Guide](docs/debugging.md)** - How to debug and trace ANSI sequences
 
